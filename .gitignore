@@ -1,2 +1,4 @@
 __pycache__/
 *.env
+# Productos HiRISE completos (.jp2, 60-210 MB): superan el límite de 100 MB de GitHub y CLAUDE.md los deja fuera de git.
+datos_crudos/**/*.jp2
