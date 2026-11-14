@@ -92,3 +92,17 @@ def test_hito_does_not_consume_seq(client, fixtures):
     r = client.post('/api/v1/evento', json=hito)
     assert r.status_code == 200 and r.json()['tipo'] == 'ack' and r.json()['mensajes_motor'] == []
     assert client.post('/api/v1/evento', json=tele(2, t=10)).status_code == 200
+
+
+def test_contract_2026_11_13_profile_without_rover_and_legacy_name(client, fixtures):
+    """No rover in the profile; telemetria_astronauta (old name) is accepted as estado_astronauta."""
+    assert 'rover' not in fixtures['perfil']
+    assert client.post('/api/v1/perfil', json=fixtures['perfil']).status_code == 200
+    legacy = {**tele(1), 'tipo': 'telemetria_astronauta'}
+    result = client.post('/api/v1/evento', json=legacy)
+    assert result.status_code == 200
+    assert [m['tipo'] for m in result.json()['mensajes_motor']] == ['estado_aborto', 'plan_actualizado']
+    snap = client.get('/api/v1/estado').json()
+    assert 'estado_astronauta' in snap['ultima_telemetria']
+    rover = {'version': '1.0', 't': 10, 'hora_solar': 10, 'seq': 2, 'tipo': 'telemetria_rover', 'datos': {'x': 1, 'y': 1, 'bateria_pct': 50}}
+    assert client.post('/api/v1/evento', json=rover).json()['tipo'] == 'ignorado'

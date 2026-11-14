@@ -25,6 +25,6 @@ def client(tmp_path):
 
 def tele(seq, t=0, x=120, y=120, o2=40):
     return {'version':'1.0','t':t,'hora_solar':10+t/3699,'seq':seq,
-            'tipo':'telemetria_astronauta',
+            'tipo':'estado_astronauta',
             'datos':{'x':x,'y':y,'sigma_m':0,'O2_restante_L':o2,'VO2_L_min':0.745,
                      'FC_lpm':111,'velocidad_m_s':0,'carga_kg':0}}

@@ -15,7 +15,8 @@
     "documentacion": "node scripts/build-documentacion.mjs",
     "server": "node server.js",
     "dev:vr": "vite --host",
-    "predev:vr": "node scripts/build-explicacion.mjs"
+    "predev:vr": "node scripts/build-explicacion.mjs",
+    "backend": "cd .. && python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.0",

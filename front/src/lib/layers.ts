@@ -158,3 +158,32 @@ export async function setLayer(id: CapaId) {
   layerTexture.needsUpdate = true;
   layerUniforms.uLayerOn.value = 1;
 }
+
+// ---------------------------------------------------------------------------
+// CRISM at a point (JARVIS analysis card): strength 0..1 of each mineral's index
+// above the scene p90, in the 2.5 m cell under (x, z). Loaded once, on demand.
+// ---------------------------------------------------------------------------
+const crism = { estado: 'nada' as 'nada' | 'cargando' | 'listo' | 'sin datos', s: {} as Partial<Record<Mineral, Float32Array>> };
+
+export const crismListo = () => crism.estado === 'listo';
+
+export function cargarCrism() {
+  if (crism.estado !== 'nada') return;
+  crism.estado = 'cargando';
+  (async () => {
+    for (const m of Object.keys(INDICES) as Mineral[]) crism.s[m] = await mineralStrength(m);
+    crism.estado = 'listo';
+  })().catch(() => (crism.estado = 'sin datos'));
+}
+
+/** Mineral strengths at a scene point, strongest first; null until loaded (or outside the window). */
+export function crismAt(x: number, z: number): { mineral: Mineral; v: number }[] | null {
+  if (crism.estado !== 'listo') return null;
+  const ex = x + N * 1.25; // scene → ENU (origin at the SW corner, 480 m window, 2.5 m cells)
+  const ny = N * 1.25 - z;
+  const j = Math.floor(ex / 2.5);
+  const i = Math.floor(ny / 2.5);
+  if (i < 0 || j < 0 || i >= N || j >= N) return null;
+  const k = i * N + j;
+  return (Object.keys(crism.s) as Mineral[]).map((m) => ({ mineral: m, v: crism.s[m]![k] })).sort((a, b) => b.v - a.v);
+}

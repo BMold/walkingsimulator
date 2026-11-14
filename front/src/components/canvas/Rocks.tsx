@@ -9,6 +9,7 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { LITOS, litologiaDe } from '../../jarvis/lithology';
 import { mergeVertices, toCreasedNormals } from 'three-stdlib';
 import { BASE_A, HALF, ROCKS, heightAt, normalAt, sandAt } from '../../lib/terrain';
 import { mulberry32 } from '../../lib/noise';
@@ -260,8 +261,9 @@ export function RockInstances({ rocks, version }: { rocks: RockLike[]; version: 
         pos.set(r.x, heightAt(r.x, r.z) + r.s * sy * 0.25, r.z);
         scl.set(r.s, r.s * sy, r.s * 0.9);
         mesh.setMatrixAt(i, m.compose(pos, q, scl));
-        const t = TINTS[Math.floor(k * TINTS.length) % TINTS.length];
-        const v = 0.85 + 0.3 * hash3(Math.round(r.z * 10), 11, Math.round(r.x * 10));
+        // Colour of its lithology (JARVIS names it from the same function), with a little variation.
+        const t = r.s >= 0.25 ? LITOS[litologiaDe(r.x, r.z, r.s)].tint : TINTS[Math.floor(k * TINTS.length) % TINTS.length];
+        const v = 0.88 + 0.24 * hash3(Math.round(r.z * 10), 11, Math.round(r.x * 10));
         mesh.setColorAt(i, c.setRGB(t[0] * v, t[1] * v, t[2] * v));
       });
       mesh.count = list.length;

@@ -17,12 +17,19 @@ from pathlib import Path
 import websockets
 
 RAIZ = Path(__file__).resolve().parents[1]
-ENTRADAS = {"telemetria_astronauta", "telemetria_rover", "peligro", "ventanas", "SPE", "hito"}
+# Contrato del 2026-11-13: estado_astronauta (antes telemetria_astronauta) y sin rover.
+ENTRADAS = {"estado_astronauta", "telemetria_astronauta", "peligro", "ventanas", "SPE", "hito"}
+
+
+def ultimo_registro():
+    """El registro de mision mas reciente de logs/ (sesion-<fecha>-mision.jsonl)."""
+    regs = sorted((RAIZ / "logs").glob("sesion-*-mision.jsonl"))
+    return str(regs[-1]) if regs else str(RAIZ / "logs/sesion-mision.jsonl")
 
 
 async def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--registro", default=str(RAIZ / "logs/sesion-2026-11-12-mision.jsonl"))
+    ap.add_argument("--registro", default=ultimo_registro())
     ap.add_argument("--guion", default=str(RAIZ / "contratos/ejemplos/guion_mision.json"), help="de aqui sale el perfil")
     ap.add_argument("--url", default="ws://127.0.0.1:8000/ws")
     ap.add_argument("--token", default="", help="ARES_WRITE_TOKEN del backend, si lo tiene")
@@ -60,7 +67,7 @@ async def main():
             r = await enviar(ev)
             if r.get("tipo") == "error":
                 print(f"  {ev['tipo']} t={ev.get('t')}: ERROR {r.get('codigo')} {r.get('detalle')}")
-            elif ev["tipo"] != "telemetria_astronauta" or seq % 60 == 0:
+            elif ev["tipo"] not in ("estado_astronauta", "telemetria_astronauta") or seq % 60 == 0:
                 print(f"  t = {ev.get('t', 0) / 60:6.1f} min  {ev['tipo']:22s} -> {r.get('tipo')}"
                       + (f" ({r.get('mensajes_emitidos')} del Motor)" if r.get("mensajes_emitidos") else ""))
     print("fin del registro")

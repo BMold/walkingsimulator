@@ -36,6 +36,7 @@ export function attachSync(httpServer, { log = console.log } = {}) {
     storm: 0,
     drone: null,
     bio: null, // suit biodata simulated on the laptop (front/src/hud/bio.ts)
+    nav: null, // visor navigation: next goal, ETA, schedule, next turn (front/src/nav/nav.ts)
     hud: { jarvis: true }, // JARVIS or normal visor view, switched from either device
     vr: false,
     host: false,
@@ -80,6 +81,7 @@ export function attachSync(httpServer, { log = console.log } = {}) {
       if (p.gaze && typeof p.gaze === 'object') state.gaze = { on: !!p.gaze.on, speed: +p.gaze.speed || 0, thr: +p.gaze.thr || 0, walking: !!p.gaze.walking };
       if (p.drone) state.drone = p.drone;
       if (p.bio && typeof p.bio === 'object') state.bio = p.bio;
+      if (p.nav && typeof p.nav === 'object') state.nav = p.nav;
       // Relay the body pose the instant it arrives (like the rotation): the phone
       // no longer waits up to one 60 Hz tick. Volatile: a late pose is dropped, never queued.
       socket.broadcast.volatile.emit('pose', {

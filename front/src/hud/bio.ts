@@ -135,6 +135,8 @@ export function stepBio(dtReal: number) {
     gradeAvg += (G - gradeAvg) * (1 - Math.exp(-dtReal / 1));
     const eta = 1 + 0.9 * sandAt(vr.x, vr.z);
     target = Math.max(REST_W, pandolfWatts(gradeAvg, eta, walkSpeed(gradeAvg, eta)));
+    // Loose sand (scenario 'multiplicador' ×3 on the edges): the legs work much harder.
+    if (costGrid.hazard[cellOf({ x: vr.x, z: vr.z })] === 3) target *= 2;
   }
   // Effort changes are not instantaneous: heart rate and VO₂ follow with a lag.
   bio.M += (target - bio.M) * (1 - Math.exp(-dts / KINETICS_S));
@@ -192,7 +194,7 @@ export function applyBio(b: BioNet) {
 
 /**
  * Mission mode (laptop): the suit numbers are the messages' numbers, nothing simulated:
- * O₂, R, O2_minimo and margen from estado_aborto; FC and VO₂ from telemetria_astronauta.
+ * O₂, R, O2_minimo and margen from estado_aborto; FC and VO₂ from estado_astronauta.
  */
 export function bioFromMission(
   m: { O2: number; O2_0: number; R: number; O2min: number; margen: number; FC: number; VO2: number },

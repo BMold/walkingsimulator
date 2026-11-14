@@ -259,7 +259,7 @@ function updateSun() {
   rt.sun = sunAt(rt.lat, rt.mars.decl, ltstNow(), rt.mars.rAU);
 }
 
-function recost() {
+export function recost() {
   const st = S();
   updateSun();
   computeCostmap(st.hazards, st.canyonScanned, rt.sun, (x, z) => fowValueAt(x, z) > 0.35);
@@ -525,20 +525,24 @@ function keepClear(x: number, z: number, r: number) {
 export const HILL_HEIGHT = 12;
 export const HILL_WIDTH = 13;
 
+/** Set while the terrain is re-shaped by a hill only (the VR view must not restart the walk). */
+export const terrainEdit = { hillsOnly: false };
+
 /** Re-shape the terrain with every user hill. */
 function syncHills() {
   const hills = S().hazards.filter((h) => h.kind === 'hill');
+  terrainEdit.hillsOnly = true;
   applyBumps(hills.map((h) => ({ x: h.x, z: h.z, h: h.height ?? HILL_HEIGHT, r: h.r })));
   useSimStore.setState((s) => ({ terrainVersion: s.terrainVersion + 1 }));
 }
 
-export function addUserHazard(kind: 'rocks' | 'cold' | 'hill', x0: number, z0: number): string {
+export function addUserHazard(kind: 'rocks' | 'cold' | 'hill' | 'sand', x0: number, z0: number): string {
   const id = `user-${kind}-${++userSeq}`;
-  const radius = kind === 'cold' ? 9 : kind === 'hill' ? HILL_WIDTH : 6;
+  const radius = kind === 'cold' ? 9 : kind === 'hill' ? HILL_WIDTH : kind === 'sand' ? 8 : 6;
   const { x, z } = keepClear(x0, z0, kind === 'hill' ? radius * 1.3 : radius);
   const h: Hazard =
-    kind === 'cold'
-      ? { id, kind, x, z, r: radius }
+    kind === 'cold' || kind === 'sand'
+      ? { id, kind, x, z, r: radius, ...(kind === 'sand' ? { factor: 3 } : {}) }
       : kind === 'hill'
         ? { id, kind, x, z, r: radius, height: HILL_HEIGHT }
         : { id, kind, x, z, r: radius, rocks: makeRocks(x, z, 6, 1000 + userSeq) };
@@ -571,6 +575,15 @@ export function clearUserHazards() {
   useSimStore.setState((s) => ({ hazards: s.hazards.filter((h) => !h.id.startsWith('user')) }));
   syncHills();
   liveReplan(true, 'Obstáculos del usuario eliminados: ruta y tour recalculados.');
+}
+
+/** Phone: take the laptop's hazards (re-shaping the terrain only if the hills changed). */
+export function setHazardsFromNet(list: Hazard[]) {
+  const key = (l: Hazard[]) => JSON.stringify(l.filter((h) => h.kind === 'hill').map((h) => [h.x, h.z, h.r, h.height]));
+  const hillsChanged = key(list) !== key(S().hazards);
+  useSimStore.setState({ hazards: list });
+  if (hillsChanged) syncHills();
+  recost();
 }
 
 /** Hazard under a point (for the move / erase tools). */

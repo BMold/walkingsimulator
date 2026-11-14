@@ -6,7 +6,7 @@
 import express from 'express';
 import { createServer } from 'node:http';
 import { networkInterfaces } from 'node:os';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { attachSync, TICK_HZ } from './sync-core.js';
 
@@ -22,6 +22,11 @@ const terreno = fileURLToPath(new URL('../terreno/', import.meta.url));
 if (existsSync(terreno)) app.use('/terreno', express.static(terreno, { index: false, dotfiles: 'deny' }));
 // Mission logs for the replay mode.
 const logs = fileURLToPath(new URL('../logs/', import.meta.url));
+// The newest mission log (same answer as the Vite dev server).
+app.get('/logs/ultimo.json', (_req, res) => {
+  const regs = existsSync(logs) ? readdirSync(logs).filter((f) => /^sesion-.*-mision\.jsonl$/.test(f)).sort() : [];
+  res.json({ nombre: regs.length ? regs[regs.length - 1].replace(/\.jsonl$/, '') : null });
+});
 if (existsSync(logs)) app.use('/logs', express.static(logs, { index: false, dotfiles: 'deny' }));
 app.get('/health', (_req, res) => res.json({ ok: true }));
 

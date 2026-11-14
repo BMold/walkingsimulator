@@ -24,10 +24,15 @@ import { Q, toneMap } from '../render/quality';
 import { VisorHud, applyBio } from '../hud';
 import { JarvisOverlay } from '../jarvis/JarvisOverlay';
 import { bindJarvisSync, toggleJarvis } from '../jarvis/sync';
-import { applyMissionView } from '../mission/mission';
+import { applyMissionView, missionAviso } from '../mission/mission';
+import { NavPanel } from '../nav/NavPanel';
+import { iniciarBd, revRemota } from '../jarvis/bd';
+import { applyNav } from '../nav/nav';
+import { setHazardsFromNet } from '../store/simEngine';
+import { useSimStore } from '../store/useSimStore';
 import { layerState, setLayer, type CapaId } from '../lib/layers';
 
-const net = { state: null as SyncState | null, routeId: -1, pose: null as PoseNet | null, poseAt: 0, rtt: NaN };
+const net = { state: null as SyncState | null, routeId: -1, hazardsKey: '', avisoId: 0, pose: null as PoseNet | null, poseAt: 0, rtt: NaN };
 /** Longest the phone extrapolates a pose (s): beyond it, a stalled laptop must not drift you away. */
 const MAX_PREDICT = 0.15;
 const live = { heading: 0, pitch: 0, sent: 0, turning: 0 };
@@ -209,6 +214,10 @@ const card = (h: number) => ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][Math.ro
 
 export function VRCanvas() {
   const status = useVRBoot();
+  // The same JARVIS catalogue as the laptop (read only).
+  useEffect(() => {
+    if (status !== 'loading') void iniciarBd(false);
+  }, [status]);
   const [started, setStarted] = useState(false);
   const [mode, setMode] = useState<Mode>('none');
   const sensor = mode === 'sensor';
@@ -239,6 +248,7 @@ export function VRCanvas() {
     socket.on('state', (s: SyncState) => {
       net.state = s;
       if (s.bio) applyBio(s.bio);
+      if (s.nav) applyNav(s.nav);
     });
     socket.on('pose', (p: PoseNet) => {
       net.pose = p;
@@ -251,6 +261,19 @@ export function VRCanvas() {
       }
       applyCanyonScanned(w.canyonScanned);
       if (w.mission) applyMissionView(w.mission);
+      revRemota(w.bdRev);
+      // Free walk: the scenario hazards (rocks, hills, sand, cold) and its notices.
+      if (w.hazards) {
+        const key = JSON.stringify(w.hazards.map((h) => [h.id, h.x, h.z]));
+        if (key !== net.hazardsKey || w.hazards.length !== useSimStore.getState().hazards.length) {
+          net.hazardsKey = key;
+          setHazardsFromNet(w.hazards);
+        }
+      }
+      if (!w.mission && w.aviso && w.aviso.id !== net.avisoId) {
+        net.avisoId = w.aviso.id;
+        Object.assign(missionAviso, { texto: w.aviso.texto, detalle: w.aviso.detalle, nivel: w.aviso.nivel, hasta: performance.now() + 5000 });
+      }
       if (w.capa && w.capa !== layerState.actual) void setLayer(w.capa as CapaId);
     });
     const id = window.setInterval(async () => {
@@ -325,6 +348,7 @@ export function VRCanvas() {
         {/* Suit holograms on the visor (one per eye in stereo) and the lens layer. */}
         {started && <VisorHud stereo={stereo} />}
         {started && <JarvisOverlay stereo={stereo} />}
+        {started && <NavPanel stereo={stereo} />}
         {/* Your own body: look down and you see the suit, the boots and your shadow. */}
         <SuitModel firstPerson />
         <Governor target={38} min={0.7} />

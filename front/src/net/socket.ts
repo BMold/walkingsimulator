@@ -3,6 +3,8 @@
 // /socket.io to the sync server on port 3000, so HTTPS works for both.
 import { io, type Socket } from 'socket.io-client';
 import type { BioNet } from '../hud/bio';
+import type { NavNet } from '../nav/nav';
+import type { Hazard } from '../lib/costmap';
 import type { MissionViewNet } from '../mission/mission';
 
 export type Role = 'vr-client' | 'spectator-host';
@@ -30,6 +32,8 @@ export interface SyncState {
   drone: DroneNet | null;
   /** Suit biodata simulated on the laptop (hud/bio.ts). */
   bio?: BioNet | null;
+  /** Visor navigation computed on the laptop (nav/nav.ts). */
+  nav?: NavNet | null;
   vr: boolean;
   host: boolean;
 }
@@ -53,6 +57,12 @@ export interface WorldNet {
   mission?: MissionViewNet;
   /** Package layer draped over the relief (lib/layers.ts). */
   capa?: string;
+  /** Free walk: the scenario hazards placed from the laptop (rocks, hills, sand, cold). */
+  hazards?: Hazard[];
+  /** Free walk: the latest scenario notice (shown 4 s on the visor). */
+  aviso?: { id: number; texto: string; detalle: string; nivel: 'info' | 'alerta' } | null;
+  /** JARVIS catalogue revision in MySQL: the phone reloads it when it changes. */
+  bdRev?: string;
 }
 
 let socket: Socket | null = null;

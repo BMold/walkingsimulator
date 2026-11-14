@@ -51,7 +51,8 @@ class Perfil(StrictContract):
     factor_tiempo: Positive
     duracion_eva_s: Positive
     astronauta: Astronauta
-    rover: Rover
+    # Contract of 2026-11-13: there is no rover. Older profiles that still carry the block are accepted (and ignored).
+    rover: Rover | None = None
 
 
 class Sitio(XY):
@@ -138,8 +139,10 @@ class SPEDatos(StrictContract):
 
 
 DATA_TYPES: dict[str, type[StrictContract]] = {
+    'estado_astronauta': AstronautaDatos,
+    # Legacy name (before 2026-11-13): validated the same and renamed by the service before the Motor.
     'telemetria_astronauta': AstronautaDatos,
-    'telemetria_rover': RoverDatos,
+    # telemetria_rover is gone (no rover): an unknown type, ignored as §9 says.
     'peligro': PeligroDatos,
     'ventanas': VentanasDatos,
     'SPE': SPEDatos,

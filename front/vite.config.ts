@@ -2,7 +2,7 @@ import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import basicSsl from '@vitejs/plugin-basic-ssl';
 import { networkInterfaces } from 'node:os';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 // @ts-expect-error plain ESM module shared with server.js
 import { attachSync } from './sync-core.js';
@@ -14,6 +14,8 @@ const https = process.env.VITE_HTTP !== '1';
 // Albert's backend (FastAPI, docker-compose publishes it on :8000). /api is proxied
 // so the phone, which only sees this HTTPS origin, reaches it too.
 const BACKEND = process.env.ARES_BACKEND ?? 'http://127.0.0.1:8000';
+// JARVIS catalogue: PHP + MySQL of XAMPP (front/bd/api.php served by Apache).
+const BD = process.env.ARES_BD ?? 'http://127.0.0.1/PersonalProjects/NasaSpaceApps/front';
 
 // The shared terrain package lives at the repo root (../terreno) and is served
 // as is: one copy for the optimizer, the backend and the 3D views.
@@ -31,6 +33,14 @@ function terrenoPackage(): Plugin {
       for (const [mount, dir] of Object.entries(SHARED))
         server.middlewares.use(mount, (req, res, next) => {
           const name = decodeURIComponent((req.url ?? '/').split('?')[0]).replace(/^\/+/, '');
+          // /logs/ultimo.json → the newest mission log (sesion-<fecha>-mision.jsonl), for the replay and the live simulation.
+          if (mount === '/logs' && name === 'ultimo.json') {
+            const regs = readdirSync(dir).filter((f) => /^sesion-.*-mision\.jsonl$/.test(f)).sort();
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.end(JSON.stringify({ nombre: regs.length ? regs[regs.length - 1].replace(/\.jsonl$/, '') : null }));
+            return;
+          }
           // Flat folders: plain file names only (no sub-folders, no "..").
           const ext = /^[\w.-]+\.(json|bin|jpg|jsonl)$/.exec(name)?.[1];
           const file = ext && !name.includes('..') ? dir + name : '';
@@ -75,6 +85,8 @@ export default defineConfig({
     port: 5173,
     open: false,
     proxy: {
+      '/bd/': { target: BD, changeOrigin: true, timeout: 4000, proxyTimeout: 4000 },
+      '/health': { target: BACKEND, changeOrigin: true, timeout: 2000, proxyTimeout: 2000 },
       '/api': { target: BACKEND, changeOrigin: true, timeout: 2000, proxyTimeout: 2000 },
       // Backend WebSocket (live mode). The page's origin is the laptop's LAN address, which the
       // backend's origin allow-list does not know: drop it, the proxy is the one connecting.

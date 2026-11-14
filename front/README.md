@@ -63,8 +63,8 @@ El panel de la laptop elige la **Fuente** (o la URL `?modo=`):
 | Fuente | URL | Qué mueve al astronauta y de dónde salen los números |
 |---|---|---|
 | Libre | `?role=spectator` | Teclado o mirar abajo. Ruta A* local, biodatos simulados (§10.4). Para jugar con la VR. |
-| Misión registrada | `?role=spectator&modo=mision` | Reproduce `../logs/sesion-2026-11-12-mision.jsonl` (`&registro=<nombre>` para otro). Play/pausa, ×10–×120, línea de tiempo y saltos por marcador (empiezan 30 s antes). |
-| Backend en vivo | `?role=spectator&modo=vivo` | WebSocket `/ws?rol=vr` del backend (Vite lo reenvía a `ARES_BACKEND`). |
+| Misión registrada | `?role=spectator&modo=mision` | Reproduce el registro más reciente de `../logs/` (`sesion-<fecha>-mision.jsonl`, hoy el del 2026-11-13; `&registro=<nombre>` para otro). Play/pausa, ×10–×120, línea de tiempo y saltos por marcador (empiezan 30 s antes). |
+| Backend en vivo | `?role=spectator&modo=vivo` | WebSocket `/ws?rol=vr` del backend (Vite lo reenvía a `ARES_BACKEND`). El botón **▶ Simular la misión** hace de simulación de datos (Dana) desde la laptop. |
 
 En los dos modos de misión la vista **no calcula nada** (CLAUDE.md §14). Cada elemento sale de un mensaje:
 - **Posición:** la telemetría, interpolada.
@@ -79,12 +79,16 @@ En los dos modos de misión la vista **no calcula nada** (CLAUDE.md §14). Cada 
 
 El celular recibe todo esto desde la laptop.
 
-Para probar el modo en vivo sin la telemetría real:
+**Backend en vivo, paso a paso:**
 
 ```bash
-python -m uvicorn backend.app.main:app --port 8000      # desde la raíz del repo
-python herramientas/reproducir_en_backend.py            # hace de telemetría: manda el registro al backend a ×30
+npm run backend      # FastAPI + optimizador en :8000 (corre desde la raíz del repo)
+npm run dev          # el visor; Vite reenvía /api, /ws y /health al backend
 ```
+
+Abrí `?role=spectator&modo=vivo` → pestaña **Misión**. El panel muestra si el backend está en línea y si el stream está conectado. **▶ Simular la misión** (×30, ×60 o ×120) manda el perfil del guion y los eventos de entrada (`estado_astronauta`, `peligro`, `ventanas`, `SPE`, `hito`) del registro más reciente por `/ws?rol=dana`. El Motor del backend calcula en vivo los planes, los márgenes y el aborto. **■ Detener** corta el envío. Por consola hace lo mismo `python herramientas/reproducir_en_backend.py`.
+
+El front acepta `estado_astronauta` (contrato del 2026-11-13) y también el nombre viejo `telemetria_astronauta`. El servidor de producción `server.js` todavía no reenvía `/api`, `/ws` ni `/bd`: para el modo en vivo usá `npm run dev`.
 
 ## Capas del paquete sobre el relieve
 
@@ -105,7 +109,79 @@ Visión aumentada en primera persona, compartida por el casco y la laptop.
 - **Lo nuevo que vale la pena demostrar:** las anomalías de campo (posible meteorito metálico, veta clara, concreciones) no están en ninguna BD y se marcan con **★ vale la pena documentar** y el motivo. Quedan en el registro de **Hallazgos** de la laptop, con posición y momento.
 - **En el visor:** marcos y etiquetas grandes a la profundidad real de cada objeto (se ven bien en el Cardboard), una cinta de rumbo con el hábitat y el próximo objetivo, y paneles de O₂ y pulso más grandes.
 - **JARVIS o vista normal:** con la tecla **J** o el botón de la laptop, o con **un toque** en el celular (el botón del Cardboard). Los dos dispositivos se sincronizan. La vista normal deja solo las alertas de seguridad y los efectos de lente. El doble toque sigue recentrando.
-- **Menú de la laptop:** se pliega a su encabezado con el botón o la tecla **M**, y recuerda el estado.
+- **Menú de la laptop:** ver *Menú de la laptop* más abajo.
+
+### Identificación de rocas y ficha de análisis
+
+- **Litología (escenario, no datos medidos):** cada roca de 0,5 m o más tiene un tipo basado en la estratigrafía de Mount Sharp que recorrió Curiosity. Las rocas en 3D tienen el color de su tipo, así que lo que dice JARVIS coincide con lo que se ve (`src/jarvis/lithology.ts`).
+
+  | Tipo | Dónde aparece |
+  |---|---|
+  | Lutita laminada (fm. Murray, con arcillas) | más abajo |
+  | Arenisca con sulfatos | más arriba |
+  | Arenisca eólica entrecruzada (fm. Stimson) | en parches |
+  | Basalto suelto (bloque transportado) | disperso |
+  | Conglomerado fluvial | disperso |
+
+  Las anomalías se nombran como hierro-níquel, sulfato de calcio o nódulos diagenéticos.
+- **Confianza según la distancia:**
+  - A menos de ~10 m se ven láminas, granos y vesículas, y la identificación es segura.
+  - A media distancia el traje duda y puede confundir rocas parecidas (lutita ↔ arenisca con sulfatos, arenisca eólica ↔ basalto). La etiqueta lo marca con «?».
+  - A más de ~20 m sólo dice «roca clara» u «oscura».
+- **Ficha de análisis** (esquina superior izquierda del visor) del objeto bajo la retícula central:
+  - qué es y con qué confianza;
+  - unidad, textura, grano y color;
+  - tamaño medido ± error y distancia;
+  - qué sabe la BD de él;
+  - el índice CRISM en ese punto;
+  - el valor como muestra o «★ documentar y muestrear».
+
+### Base de datos MySQL (XAMPP)
+
+El catálogo de JARVIS vive en la base `ares_twin` del MySQL de XAMPP (`root` sin contraseña). La API es `front/bd/api.php`: Apache la sirve y Vite la expone como `/bd/api.php`, para la laptop y el celular. La primera llamada crea la base y las tablas (`front/bd/esquema.sql`).
+
+- **`objetos`:**
+  - el relevamiento orbital simulado (se siembra la primera vez; sabe posición, tamaño y forma, no la litología);
+  - lo que **registra la EVA** (`fuente = 'eva'`): todo objeto nuevo mapeado a menos de 15 m, o que vale la pena documentar. En la próxima pasada sale como «EN BD (EVA)».
+- **`observaciones`:** cada identificación del traje, una fila por objeto y sesión, guardada con la confianza más alta.
+- **`destinos`:** los destinos marcados en el mapa.
+
+Sólo escribe la laptop; el celular lee el mismo catálogo y lo recarga cuando cambia. Sin MySQL todo sigue funcionando con el catálogo en memoria.
+
+La pestaña Hallazgos muestra el estado, el enlace a phpMyAdmin y un botón para borrar lo registrado por la EVA. Otra base: variables `ARES_BD_HOST`, `ARES_BD_USER`, `ARES_BD_PASS` (en Apache) y `ARES_BD` (URL para el proxy de Vite). El servidor de producción `server.js` todavía no hace de proxy de `/bd`.
+
+## Navegación del traje (`src/nav/`)
+
+Un "mini mapa" en la esquina superior derecha del visor (parte de la vista JARVIS; la vista normal lo oculta). En tercera persona, la laptop lo muestra como tarjeta en la esquina inferior derecha.
+
+- **Mapa con el rumbo hacia arriba:** la ortofoto HiRISE con el relieve sombreado (las lomas nuevas aparecen), radio de 65 m con anillos de 25 y 50 m y escala. Muestra la ruta por recorrer (gruesa, clara), la recorrida (gris al 40 %), la de escape (punteada), los sitios con el color y la forma de su mineral, los peligros, el hábitat y el objetivo (fijados al borde, con su distancia, si quedan fuera), el norte y hacia dónde mira el casco.
+- **Dónde debería estar:** el círculo punteado **PLAN** es el punto de la ruta donde el plan espera al astronauta.
+- **Elegir a dónde ir:** en la laptop, un clic en el mapa marca un **destino** y A* traza la ruta hasta ahí. Funciona en la tarjeta de la esquina y también sobre el mapa del visor en primera persona. El destino aparece como ◎ en el mapa, como «D» en la cinta de rumbo y como una columna de luz en el terreno. **Sin destino, la ruta siempre va desde donde estás hasta el hábitat** (lo seguro en una EVA); al llegar al destino, o con **✕ destino** / **⌂ Volver a la base**, vuelve a apuntar a la base. La ruta ya no recorre los sitios CRISM sola: cada destino lo elegís vos. **✕ destino** lo quita, y **＋/－** cambian el alcance del mapa (40 a 240 m). En el celular no se puede marcar: el toque del Cardboard alterna JARVIS. En modo misión el destino lo decide el optimizador.
+- **Datos:**
+  - próximo objetivo, metros por la ruta, tiempo óptimo y hora solar de llegada;
+  - adelanto o atraso respecto del plan. Un desvío o una parada se acumulan como atraso;
+  - el próximo giro;
+  - la próxima subida o bajada fuerte;
+  - el O₂ al llegar y el necesario para volver desde ahí, con los colores de seguridad;
+  - la cuenta regresiva de una tormenta solar, el polvo o la luz que queda.
+- **Tiempo óptimo:** el ritmo del contrato en cada pendiente, `v = v₀·e^(−0,042|G|)·(1 − 0,28η)` (§8.2), cerca de 0,9 m/s en plano. En modo misión, el horario es el `llegada_s` de la próxima parada del optimizador.
+- La laptop calcula los números y los manda al celular con la pose. Cada dispositivo dibuja el mapa con su propia copia de la ruta.
+
+## Simular eventos (`src/sim/escenario.ts`)
+
+Pestaña **Simular** de la laptop, solo en modo libre. Son eventos de escenario, no datos medidos. Cada uno cambia el mundo, y el mapa de costos, R(p), la ruta A*, el traje y el visor reaccionan solos. Aparecen **sobre la ruta, unos 20 m adelante**, o **donde mira el casco**.
+
+| Evento | Qué hace |
+|---|---|
+| Desprendimiento de rocas | bloques infranqueables; la ruta los rodea |
+| Loma nueva | +12 m en el DEM (la escena, el mapa y el costo cambian); la caminata no se reinicia |
+| Arena suelta | `multiplicador` ×3 de O₂ al cruzarla; el traje consume más |
+| Sombra fría | −100 °C: costo ×4 y escarcha en el visor |
+| Tormenta de polvo | sube la opacidad (τ), baja la visibilidad y JARVIS detecta a menos distancia |
+| Tormenta solar | alerta con protones en 10 min (reloj del traje, ×1/×10/×30) y el tiempo de vuelta al lado; al llegar a cero, o con un toque, pasa a **crítico**: aborta al hábitat y muestra 3 s de vista lejana |
+| Traje | fatiga VO₂ ×1,3, fuga de 2 L/min, frío extremo, recargar O₂ |
+
+Los eventos activos se listan con su distancia y se quitan uno por uno o con **Quitar todo**. El celular recibe los mismos peligros y avisos.
 
 ## HUD del traje (`src/hud/`)
 
@@ -153,7 +229,12 @@ Además mantiene un estado unificado `{ position, rotation, heading, drone }` qu
 - **Mirar abajo para avanzar (G):** con el casco puesto, bajar la vista más de 25° camina hacia adelante, sin manos. El panel de la laptop ajusta la velocidad (0,5 a 10 m/s; teclas `[` `]` o `−` `+`) y el ángulo. Las pendientes y la arena la frenan, como mucho a la mitad.
 - **F:** el dron despega de la mochila, escanea el cañón, actualiza el mapa de costos y vuelve a acoplarse.
 - **V:** primera / tercera persona. **R:** recalcular. **N:** siguiente objetivo. **L:** mostrar u ocultar etiquetas.
-- **Hora solar** y **Polvo en el aire:** deslizadores del panel; cambian el Sol, las sombras, el cielo y la bruma en la laptop y en el celular.
+- **Hora solar** y **Polvo en el aire:** deslizadores de la pestaña Entorno; cambian el Sol, las sombras, el cielo y la bruma en la laptop y en el celular.
+- **J:** vista JARVIS / normal. **M:** mostrar u ocultar el menú.
+
+### Menú de la laptop
+
+Una barra arriba (menú, estado del servidor y del casco, JARVIS, 1ª / 3ª persona) y un menú lateral con pestañas de íconos: **Ruta** (navegación, dron, recalcular), **Simular** (eventos), **Misión** (fuente de datos), **Control** (mirar abajo para avanzar, teclado), **Entorno** (hora, polvo, etiquetas, capas) y **Hallazgos**. La tecla **M** o el botón ☰ lo pliega, y recuerda la pestaña.
 - Sin casco conectado: arrastrá el mouse o usá Q/E para girar.
 
 En el celular, **doble toque** recentra la vista hacia el frente del astronauta.

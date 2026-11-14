@@ -18,7 +18,7 @@ def test_front_receives_raw_messages_ordered(client, fixtures):
             m1=producer.receive_json(); m2=producer.receive_json(); ack=producer.receive_json()
             assert [m1['tipo'],m2['tipo']]==['estado_aborto','plan_actualizado']
             assert ack['tipo']=='ack' and ack['seq']==1
-            assert viewer.receive_json()['tipo']=='telemetria_astronauta'
+            assert viewer.receive_json()['tipo']=='estado_astronauta'
             assert viewer.receive_json()['tipo']=='estado_aborto'
             planned=viewer.receive_json()
             assert planned['tipo']=='plan_actualizado' and planned['motivo']=='inicial'

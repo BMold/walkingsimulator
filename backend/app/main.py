@@ -71,8 +71,8 @@ def create_app(settings: Settings | None = None, motor_factory: Callable = Motor
         return {'version': '1.0', 'ws': '/ws?rol=dana|front|vr',
                 'http': {'perfil': '/api/v1/perfil', 'plan': '/api/v1/plan',
                          'evento': '/api/v1/evento', 'estado': '/api/v1/estado'},
-                'roles': {'dana': 'publica perfil y eventos', 'front': 'recibe telemetria y planes',
-                          'vr': 'recibe telemetria y planes'},
+                'roles': {'dana': 'publica perfil y eventos', 'front': 'recibe el estado del astronauta y los planes',
+                          'vr': 'recibe el estado del astronauta y los planes'},
                 'seq': 'consecutivo desde 1 por sesion; t no decreciente',
                 'motor': 'singleton; una llamada a la vez; asyncio.to_thread'}
 

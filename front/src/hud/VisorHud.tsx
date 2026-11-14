@@ -24,6 +24,7 @@ import { vr } from '../vr/vrEngine';
 import { heightAt } from '../lib/terrain';
 import { missionAviso, missionView } from '../mission/mission';
 import { jarvis } from '../jarvis/detector';
+import { nav } from '../nav/nav';
 
 const CYAN = '#00f3ff';
 const D = 0.6; // metres from the eyes to the hologram plane
@@ -199,6 +200,10 @@ function drawAlert(g: CanvasRenderingContext2D, w: number, h: number): boolean {
           ? { t: 'ZONA DE ABORTO', d: `volver al hábitat · necesitás ${fmt(o2Minimo())} L`, col: LEVEL_COLOR.rojo, icon: '⚠' }
           : missionView.activo && missionView.spe
             ? { t: missionView.spe === 'critico' ? 'TORMENTA SOLAR CRÍTICA' : 'ALERTA SPE', d: missionView.spe === 'critico' ? 'volver al hábitat' : 'reserva de O₂ al 25 %', col: missionView.spe === 'critico' ? LEVEL_COLOR.rojo : LEVEL_COLOR.ambar, icon: '☢' }
+            : !missionView.activo && nav.spe
+              ? nav.spe === 'critico'
+                ? { t: 'TORMENTA SOLAR CRÍTICA', d: 'volver al hábitat por la ruta de escape', col: LEVEL_COLOR.rojo, icon: '☢' }
+                : { t: 'ALERTA SPE', d: `protones en ${Math.floor(nav.speQuedaS / 60)}:${String(Math.floor(nav.speQuedaS % 60)).padStart(2, '0')} · volver toma ${Math.ceil(nav.speVueltaS / 60)} min`, col: LEVEL_COLOR.ambar, icon: '☢' }
             : bio.frost > 0.6
               ? { t: 'FRÍO EXTREMO', d: 'salir de la sombra · calefacción al máximo', col: LEVEL_COLOR.ambar, icon: '⚠' }
               : bio.FC > 170

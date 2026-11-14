@@ -10,7 +10,6 @@ import { planAStar } from '../lib/pathfinding';
 import { BASE_A, CANYON, HALF, ROCKS, heightAt, sandAt, type XZ } from '../lib/terrain';
 import { REAL } from '../lib/realTerrain';
 import { walkSpeed } from '../lib/energy';
-import { SITES } from '../lib/sites';
 import { makeRoute, rt } from '../store/simEngine';
 import { useSimStore } from '../store/useSimStore';
 import { sunAt } from '../lib/marsTime';
@@ -50,12 +49,9 @@ const bumpRoute = () => useSimStore.setState((s) => ({ routeVersion: s.routeVers
 
 /** Called once the terrain and the tour are ready (after initSimulation). */
 export function initVR() {
-  const tour = S().tour;
-  vr.goals = (tour?.stops ?? []).map((s) => {
-    const site = SITES.find((x) => x.code === s.code)!;
-    return { code: s.code, x: site.x, z: site.z };
-  });
-  vr.goals.push({ code: 'A', x: BASE_A.x, z: BASE_A.z });
+  // Without a destination picked on the map, the route always leads home: from
+  // wherever the astronaut stands to the habitat (the safe default of an EVA).
+  vr.goals = [{ code: 'A', x: BASE_A.x, z: BASE_A.z }];
   vr.goalIdx = 0;
   vr.x = BASE_A.x;
   vr.z = BASE_A.z;
@@ -95,6 +91,18 @@ function syncRuntime() {
 export function recalculateRoute(reason: string) {
   const goal = currentGoal();
   if (!goal) return;
+  if (goal.code === 'A' && Math.hypot(goal.x - vr.x, goal.z - vr.z) <= GOAL_RADIUS) {
+    // Already home: nothing to walk (the route comes back as soon as you leave).
+    rt.route = makeRoute([{ x: vr.x, z: vr.z }]);
+    rt.sAstro = 0;
+    vr.routeId++;
+    vr.routeLitres = 0;
+    vr.lastRecalcReason = reason;
+    vr.message = 'En el hábitat. Marcá un destino en el mapa; sin destino, la ruta siempre vuelve a la base.';
+    bumpRoute();
+    onWorldChange?.();
+    return;
+  }
   const t0 = performance.now();
   const res = planAStar({ x: vr.x, z: vr.z }, goal);
   rt.route = makeRoute(res.points);
@@ -186,17 +194,35 @@ function checkGoal() {
   const g = currentGoal();
   if (!g) return;
   if (Math.hypot(g.x - vr.x, g.z - vr.z) > GOAL_RADIUS) return;
-  const tour = S().tour;
-  if (tour) useSimStore.setState({ tour: { ...tour, stops: tour.stops.map((s) => (s.code === g.code ? { ...s, done: true } : s)) } });
-  vr.goalIdx++;
-  const next = currentGoal();
-  if (next) recalculateRoute(`hacia ${next.code === 'A' ? 'el hábitat' : next.code}`);
-  else {
-    rt.route = makeRoute([{ x: vr.x, z: vr.z }]);
-    vr.message = 'EVA completa: tripulación en el hábitat';
-    bumpRoute();
-    onWorldChange?.();
+  if (g.code === 'A') {
+    // Home is the goal that never ends: arriving just clears the route.
+    if (rt.route.n > 1) recalculateRoute('llegada al hábitat');
+    return;
   }
+  // A picked destination reached: drop it, the route turns back to the habitat.
+  vr.goals.splice(vr.goalIdx, 1);
+  recalculateRoute('de vuelta al hábitat (destino alcanzado)');
+}
+
+/**
+ * Destination picked on the visor map: it becomes the current goal (the tour
+ * resumes after it). Picking again moves it.
+ */
+export function setDestino(x: number, z: number) {
+  const lim = HALF - 14;
+  const g: Goal = { code: 'D', x: Math.max(-lim, Math.min(lim, x)), z: Math.max(-lim, Math.min(lim, z)) };
+  // One destination at a time, then home.
+  vr.goals = [g, { code: 'A', x: BASE_A.x, z: BASE_A.z }];
+  vr.goalIdx = 0;
+  recalculateRoute('hacia el destino marcado');
+}
+
+/** Drop the picked destination (back to the tour). */
+export function cancelarDestino() {
+  if (currentGoal()?.code !== 'D') return;
+  vr.goals = [{ code: 'A', x: BASE_A.x, z: BASE_A.z }];
+  vr.goalIdx = 0;
+  recalculateRoute('destino cancelado: de vuelta al hábitat');
 }
 
 /** Skip to the next goal (laptop key N). */

@@ -82,6 +82,16 @@ function ColdZone({ h }: { h: Hazard }) {
   );
 }
 
+function SandZone({ h }: { h: Hazard }) {
+  return (
+    <group>
+      {/* soft, wind-rippled drift: a warm tint over the ground */}
+      <DrapedDecal x={h.x} z={h.z} r={h.r} color="#d9a868" mode={1} />
+      <Label x={h.x} z={h.z} y={3} text={`Arena suelta · O₂ ×${h.factor ?? 3}`} color="#f0cf9c" />
+    </group>
+  );
+}
+
 function CanyonMarker() {
   const scanned = useSimStore((s) => s.canyonScanned);
   return (
@@ -104,8 +114,10 @@ export function HazardVisuals() {
       {hazards.map((h) =>
         h.kind === 'cold' ? (
           <ColdZone key={h.id} h={h} />
+        ) : h.kind === 'sand' ? (
+          <SandZone key={h.id} h={h} />
         ) : h.kind === 'hill' ? (
-          <Label key={h.id} x={h.x} z={h.z} y={3} text={`Montaña +${(h.height ?? 12).toFixed(0)} m`} color="#e8d2b8" />
+          <Label key={h.id} x={h.x} z={h.z} y={3} text={`Loma +${(h.height ?? 12).toFixed(0)} m`} color="#e8d2b8" />
         ) : (
           <RockField key={h.id} h={h} />
         ),

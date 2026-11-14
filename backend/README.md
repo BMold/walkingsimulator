@@ -1,6 +1,18 @@
 # Backend Albert — ARES-TWIN
 
-Implementación FastAPI + WebSocket del contrato **v1.0** establecido en `../CLAUDE.md`. Usa **directamente** `optimizador.Motor`; no inventa rutas ni modifica la física. Parte de un terreno **sintético** de Mount Sharp/Gale de `../terreno/`, de 96×96 celdas × 2,5 m.
+Implementación FastAPI + WebSocket del contrato **v1.0** establecido en `../CLAUDE.md` y `../contratos/INTEGRACION.md`. Usa **directamente** `optimizador.Motor`; no inventa rutas ni modifica la física. Sirve el paquete **real** `../terreno/` (DEM USGS, 192 × 192 celdas de 2,5 m, 480 m de lado).
+
+**Contrato del 2026-11-13:** el estado del astronauta se llama `estado_astronauta` (datos simulados; no hay telemetría) y **no hay rover**. El perfil ya no lleva el bloque `rover` (si llega, se acepta y se ignora), `telemetria_astronauta` se acepta como nombre viejo y se renombra antes del Motor, y `telemetria_rover` es un tipo desconocido (se ignora, §9).
+
+## Con el frontend
+
+```bash
+cd front
+npm run backend      # este servidor en :8000 (desde la raíz del repo)
+npm run dev          # el visor; Vite hace de proxy de /api, /ws y /health hacia :8000
+```
+
+Abrí `http://localhost:5173/?role=spectator&modo=vivo` → pestaña **Misión** → **▶ Simular la misión**. La laptop hace de simulación de datos (Dana): manda el perfil del guion y los eventos de entrada del registro más reciente de `logs/` por `/ws?rol=dana`; el Motor calcula planes, márgenes y el aborto en vivo, y el visor y el celular (`/ws?rol=vr`) los reciben. Lo mismo por consola: `python herramientas/reproducir_en_backend.py`.
 
 ## Arranque (desde la raíz del repositorio)
 
@@ -76,7 +88,7 @@ const ws = new WebSocket('ws://localhost:8000/ws?rol=front');
 ws.onmessage = (ev) => {
   const m = JSON.parse(ev.data);
   if (m.tipo === 'snapshot') console.log('Estado inicial', m.estado);
-  if (m.tipo === 'telemetria_astronauta') console.log('O2', m.datos.O2_restante_L);
+  if (m.tipo === 'estado_astronauta') console.log('O2', m.datos.O2_restante_L);
   if (m.tipo === 'estado_aborto') console.log('Margen', m.margen_pct);
   if (m.tipo === 'plan_actualizado') console.log('Nueva ruta', m.plan.polilinea);
   if (m.tipo === 'abortar') console.log('Ruta escape', m.ruta_escape);

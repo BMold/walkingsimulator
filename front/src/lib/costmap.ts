@@ -32,7 +32,9 @@ export interface HazardRock {
 
 export interface Hazard {
   id: string;
-  kind: 'cold' | 'rocks' | 'hill';
+  kind: 'cold' | 'rocks' | 'hill' | 'sand';
+  /** sand: O₂ multiplier inside the circle (CLAUDE.md §9 'multiplicador', 1–5). */
+  factor?: number;
   height?: number; // hills: metres above the base terrain
   x: number;
   z: number;
@@ -54,7 +56,7 @@ export const costGrid = {
   slope: new Float32Array(NN),
   sand: new Float32Array(NN),
   height: new Float32Array(NN),
-  hazard: new Uint8Array(NN), // 1 = cold, 2 = rock field
+  hazard: new Uint8Array(NN), // 1 = cold, 2 = rock field, 3 = loose sand
   shade: new Uint8Array(NN), // 1 = in terrain shadow
   factor: new Float32Array(NN), // risk multiplier of the cell
   /** Directed edges: [k * 8 + d] → litres of O₂ (∞ if not walkable). */
@@ -166,6 +168,11 @@ export function computeCostmap(hazards: Hazard[], canyonScanned: boolean, sun: S
           f *= COLD_FACTOR;
           hazard[k] = 1;
         } else if (d < h.r * 1.35) f *= 1.4;
+      } else if (h.kind === 'sand') {
+        if (d < h.r) {
+          f *= h.factor ?? 3;
+          hazard[k] = 3;
+        }
       } else if (h.kind === 'rocks') {
         if (d < h.r) {
           blocked = true;

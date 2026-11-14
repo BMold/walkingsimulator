@@ -16,6 +16,29 @@ import { BASE_A } from '../lib/terrain';
 import { SITES } from '../lib/sites';
 import { missionView } from '../mission/mission';
 import { LEVEL_COLOR } from '../hud/bio';
+import { FichaPanel } from './FichaPanel';
+
+/** Aiming reticle at the centre of the view (the analysis card reads what is under it). */
+function Reticle() {
+  const ref = useRef<THREE.Mesh>(null);
+  const mat = useMemo(() => new THREE.MeshBasicMaterial({ color: '#00f3ff', transparent: true, opacity: 0.75, depthTest: false, depthWrite: false, toneMapped: false }), []);
+  useFrame((state) => {
+    const m = ref.current;
+    if (!m) return;
+    m.visible = jarvis.on;
+    m.position.copy(state.camera.position);
+    m.quaternion.copy(state.camera.quaternion);
+    m.translateZ(-D);
+    const k = jarvis.foco ? 1.25 : 1;
+    m.scale.setScalar(k);
+    mat.color.set(jarvis.foco ? (jarvis.foco.m.interes >= 0.5 ? STAR : '#00f3ff') : '#9fb3c4');
+  }, 0.5);
+  return (
+    <mesh ref={ref} material={mat} renderOrder={1004} frustumCulled={false}>
+      <ringGeometry args={[0.009, 0.0115, 32]} />
+    </mesh>
+  );
+}
 
 const FONT = 'ui-monospace, Consolas, "Courier New", monospace';
 const COLORS = { catalogado: '#00f3ff', similar: '#e6edf5', nuevo: '#ff4fd8', peligro: LEVEL_COLOR.rojo, sitio: '#00f3ff' };
@@ -73,7 +96,8 @@ function drawLabel(g: CanvasRenderingContext2D, w: number, h: number, det: Detec
   g.stroke();
   const o = det.o;
   const tam = o.clase === 'roca' || o.clase === 'bloque' || o.clase === 'meteorito' || o.clase === 'veta' || o.clase === 'concrecion' ? ` · ${fmt(det.rMedido * 2)} m` : '';
-  const titulo = o.clase === 'sitio' ? `${o.id} · ${o.nota ?? 'sitio'}` : o.clase === 'peligro' ? `PELIGRO ${o.id}` : `${CLASE_NOMBRE[o.clase]}${tam}`;
+  const nombre = det.ident ? `${det.ident.nombre}${!det.ident.generico && det.ident.conf < 0.6 ? '?' : ''}` : det.idAnomalia ? det.idAnomalia.nombre : CLASE_NOMBRE[o.clase];
+  const titulo = o.clase === 'sitio' ? `${o.id} · ${o.nota ?? 'sitio'}` : o.clase === 'peligro' ? `PELIGRO ${o.id}` : `${nombre}${tam}`;
   g.fillStyle = col;
   let size = 50;
   g.font = `bold ${size}px ${FONT}`;
@@ -86,7 +110,7 @@ function drawLabel(g: CanvasRenderingContext2D, w: number, h: number, det: Detec
     o.clase === 'peligro'
       ? 'reportado por la telemetría'
       : m.estado === 'catalogado'
-        ? `EN BD ${m.ref?.id ?? ''} · ${Math.round(m.similitud * 100)} %`
+        ? `EN BD${m.ref?.fuente === 'eva' ? ' (EVA)' : ''} ${m.ref?.id ?? ''} · ${Math.round(m.similitud * 100)} %`
         : m.estado === 'similar'
           ? `PARECIDO a ${m.ref?.id ?? '?'} · ${Math.round(m.similitud * 100)} %`
           : 'NUEVO · no está en la BD';
@@ -134,7 +158,7 @@ function Slot({ i }: { i: number }) {
     const cy = objectCenterY(o);
     const d = state.camera.position.distanceTo(new THREE.Vector3(o.x, cy, o.z));
     // Frame around the object, never smaller than ~2.6° so far objects stay visible.
-    const fs = Math.max(o.r * 2.6, d * 0.045);
+    const fs = Math.max(o.r * 2.2, d * 0.045);
     frameMat.map = frameTexture(styleOf(det));
     f.position.set(o.x, cy, o.z);
     f.scale.set(fs, fs, 1);
@@ -143,7 +167,7 @@ function Slot({ i }: { i: number }) {
     const lh = (lw * lab.c.height) / lab.c.width;
     l.position.set(o.x, cy + fs / 2 + lh / 2 + 0.05 * lw, o.z);
     l.scale.set(lw, lh, 1);
-    const key = `${o.id}|${det.m.estado}|${Math.round(det.d)}|${Math.round(det.m.similitud * 100)}`;
+    const key = `${o.id}|${det.m.estado}|${Math.round(det.d)}|${Math.round(det.m.similitud * 100)}|${det.ident?.nombre ?? det.idAnomalia?.nombre ?? ''}|${det.m.ref?.fuente ?? ''}`;
     if (key !== lab.key) {
       lab.key = key;
       drawLabel(lab.g, lab.c.width, lab.c.height, det);
@@ -274,6 +298,8 @@ export function JarvisOverlay({ anchor = 'visor', stereo = false }: { anchor?: '
       <mesh ref={tape} material={tapeMat} renderOrder={1001} frustumCulled={false} visible={false}>
         <planeGeometry args={[1, 1]} />
       </mesh>
+      {anchor === 'visor' && <FichaPanel stereo={stereo} />}
+      {anchor === 'visor' && <Reticle />}
       {Array.from({ length: SLOTS }).map((_, i) => (
         <Slot key={i} i={i} />
       ))}

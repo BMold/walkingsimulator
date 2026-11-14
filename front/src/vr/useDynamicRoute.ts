@@ -9,7 +9,7 @@
 import { useEffect, useRef } from 'react';
 import { rt } from '../store/simEngine';
 import { useSimStore } from '../store/useSimStore';
-import { DEVIATION_M, recalculateRoute, vr } from './vrEngine';
+import { DEVIATION_M, GOAL_RADIUS, currentGoal, recalculateRoute, vr } from './vrEngine';
 
 const CHECK_MS = 100;
 const MIN_GAP_MS = 400; // never re-plan more often than this
@@ -56,7 +56,17 @@ export function useDynamicRoute(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
     const id = window.setInterval(() => {
-      if (!vr.ready || rt.route.n < 2) return;
+      if (!vr.ready) return;
+      if (rt.route.n < 2) {
+        // No route (standing at home): once the astronaut walks out, draw the way back.
+        const g = currentGoal();
+        const now = performance.now();
+        if (g && Math.hypot(g.x - vr.x, g.z - vr.z) > GOAL_RADIUS && now - lastRecalc.current > MIN_GAP_MS) {
+          lastRecalc.current = now;
+          recalculateRoute(g.code === 'A' ? 'de vuelta al hábitat' : 'hacia el destino');
+        }
+        return;
+      }
       const { dist, s } = projectOnRoute(vr.x, vr.z);
       vr.lastDeviation = dist;
       if (dist > DEVIATION_M) {

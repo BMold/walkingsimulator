@@ -15,6 +15,7 @@
 import { mulberry32 } from '../lib/noise';
 import { BASE_A, ROCKS, heightAt, terrainInfo, type XZ } from '../lib/terrain';
 import { SITES } from '../lib/sites';
+import { litologiaDe, type Identificacion, type LitoId } from './lithology';
 
 export type Clase = 'roca' | 'bloque' | 'meteorito' | 'veta' | 'concrecion' | 'sitio' | 'habitat' | 'peligro';
 
@@ -41,6 +42,8 @@ export interface FieldObject {
   /** Shape ratio (height / width), for the matching. */
   forma: number;
   nota?: string;
+  /** rocks: lithology (scene truth; the suit has to identify it) */
+  lito?: LitoId;
 }
 
 /** A catalogue entry: what the orbital survey measured (with noise). */
@@ -51,6 +54,13 @@ export interface DbEntry {
   z: number;
   r: number;
   forma: number;
+  /** orbital survey or registered by the EVA (MySQL `objetos.fuente`) */
+  fuente?: 'orbital' | 'eva';
+  /** what the EVA identified (the orbital survey only knows position, size and shape) */
+  lito?: LitoId;
+  conf?: number;
+  interes?: number;
+  nota?: string;
 }
 
 /** Field anomalies: real-looking finds the orbital survey cannot know (rendered by Anomalies.tsx). */
@@ -58,7 +68,18 @@ export interface Anomaly extends FieldObject {
   rot: number;
 }
 
-export const field = { objects: [] as FieldObject[], anomalies: [] as Anomaly[], db: [] as DbEntry[], version: -1, nDb: 0 };
+export const field = {
+  objects: [] as FieldObject[],
+  anomalies: [] as Anomaly[],
+  /** the catalogue the suit compares against: from MySQL (jarvis/bd.ts), else dbLocal */
+  db: [] as DbEntry[],
+  /** the simulated orbital survey (seeds the database the first time) */
+  dbLocal: [] as DbEntry[],
+  /** where `db` came from */
+  dbFrom: 'local' as 'local' | 'bd',
+  version: -1,
+  nDb: 0,
+};
 
 const MIN_R = 0.25; // boulders of 0.5 m and up are worth reporting (and the size HiRISE starts to resolve)
 const SURVEY_COVERAGE = 0.82; // fraction of those boulders in the orbital catalogue
@@ -74,11 +95,11 @@ export function ensureField() {
   ROCKS.forEach((r, i) => {
     if (r.s < MIN_R) return;
     const sy = r.sy ?? 0.8;
-    const o: FieldObject = { id: `R-${String(i + 1).padStart(4, '0')}`, clase: r.s >= 0.8 ? 'bloque' : 'roca', x: r.x, z: r.z, r: r.s, h: r.s * sy * 0.5, forma: sy };
+    const o: FieldObject = { id: `R-${String(i + 1).padStart(4, '0')}`, clase: r.s >= 0.8 ? 'bloque' : 'roca', x: r.x, z: r.z, r: r.s, h: r.s * sy * 0.25, forma: sy, lito: litologiaDe(r.x, r.z, r.s) };
     objects.push(o);
     if (rng() < SURVEY_COVERAGE) {
-      // Orbital measurement: ±0.4 m in position, ±12 % in size, shape from shadows (±15 %).
-      db.push({ id: o.id, clase: o.clase, x: o.x + (rng() - 0.5) * 0.8, z: o.z + (rng() - 0.5) * 0.8, r: o.r * (1 + (rng() - 0.5) * 0.24), forma: o.forma * (1 + (rng() - 0.5) * 0.3) });
+      // Orbital measurement: ±0.4 m in position, ±12 % in size, shape from shadows (±15 %). No lithology from orbit.
+      db.push({ id: o.id, clase: o.clase, fuente: 'orbital', x: o.x + (rng() - 0.5) * 0.8, z: o.z + (rng() - 0.5) * 0.8, r: o.r * (1 + (rng() - 0.5) * 0.24), forma: o.forma * (1 + (rng() - 0.5) * 0.3) });
     }
   });
 
@@ -86,10 +107,10 @@ export function ensureField() {
     if (!s.mineralKey) continue;
     const o: FieldObject = { id: s.code, clase: 'sitio', x: s.x, z: s.z, r: 1.5, h: 2.7, forma: 1, nota: s.mineral };
     objects.push(o);
-    db.push({ id: o.id, clase: 'sitio', x: s.x, z: s.z, r: 1.5, forma: 1 });
+    db.push({ id: o.id, clase: 'sitio', fuente: 'orbital', x: s.x, z: s.z, r: 1.5, forma: 1, nota: s.mineral });
   }
   objects.push({ id: 'H', clase: 'habitat', x: BASE_A.x - 7, z: BASE_A.z - 7, r: 6, h: 2, forma: 0.5 });
-  db.push({ id: 'H', clase: 'habitat', x: BASE_A.x - 7, z: BASE_A.z - 7, r: 6, forma: 0.5 });
+  db.push({ id: 'H', clase: 'habitat', fuente: 'orbital', x: BASE_A.x - 7, z: BASE_A.z - 7, r: 6, forma: 0.5 });
 
   // Anomalies near the first mineral sites (where a geologist would be looking).
   const kinds: Clase[] = ['meteorito', 'veta', 'concrecion'];
@@ -119,8 +140,10 @@ export function ensureField() {
 
   field.objects = objects;
   field.anomalies = anomalies;
-  field.db = db;
-  field.nDb = db.length;
+  field.dbLocal = db;
+  // A terrain change rebuilds the scene objects; the catalogue keeps whatever the database gave (bd.ts).
+  if (field.dbFrom === 'local') field.db = db.slice();
+  field.nDb = field.db.length;
   return field;
 }
 
@@ -136,7 +159,7 @@ export interface Match {
 }
 
 /** Compare a detection with the catalogue (measured size, as a suit sensor would). */
-export function matchObject(o: FieldObject, rMedido: number): Match {
+export function matchObject(o: FieldObject, rMedido: number, ident?: Identificacion | null): Match {
   let best: DbEntry | null = null;
   let bs = 0;
   for (const e of field.db) {
@@ -150,7 +173,8 @@ export function matchObject(o: FieldObject, rMedido: number): Match {
     const pos = Math.exp(-d2 / (2 * 0.6 * 0.6));
     const size = Math.exp(-((Math.log(rMedido / e.r) / 0.25) ** 2) / 2);
     const shape = Math.exp(-(((o.forma - e.forma) / 0.35) ** 2) / 2);
-    const s = pos * (0.55 + 0.45 * size) * (0.7 + 0.3 * shape);
+    // Known places (sites, habitat) are matched on position only; rocks also on size and shape.
+    const s = o.clase === 'sitio' || o.clase === 'habitat' ? pos : pos * (0.55 + 0.45 * size) * (0.7 + 0.3 * shape);
     if (s > bs) {
       bs = s;
       best = e;
@@ -163,6 +187,7 @@ export function matchObject(o: FieldObject, rMedido: number): Match {
   if (o.clase === 'meteorito') [interes, motivo] = [0.95, 'composición metálica: no es roca local'];
   else if (o.clase === 'veta') [interes, motivo] = [0.85, 'material claro: posible agua en el pasado'];
   else if (o.clase === 'concrecion') [interes, motivo] = [0.75, 'concreciones: química en medio acuoso'];
+  else if (ident && !ident.generico && ident.estimada === 'conglomerado' && ident.conf >= 0.6) [interes, motivo] = [0.6, 'conglomerado: guijarros redondeados por agua corriente'];
   else if (estado === 'nuevo' && (o.clase === 'bloque' || o.clase === 'roca')) [interes, motivo] = [o.r >= 0.8 ? 0.5 : 0.25, 'no figura en el relevamiento orbital'];
   if (interes > 0) {
     const near = SITES.some((s) => s.mineralKey && Math.hypot(s.x - o.x, s.z - o.z) < 20);

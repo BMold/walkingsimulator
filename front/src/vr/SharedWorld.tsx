@@ -11,9 +11,12 @@ import { ScoutDrone } from '../components/canvas/ScoutDrone';
 import { useMarsTrek } from '../hooks/useMarsTrek';
 import { useSimStore } from '../store/useSimStore';
 import { initVR } from './vrEngine';
+import { terrainEdit } from '../store/simEngine';
+import { resetNav } from '../nav/nav';
 import { ReturnBarrier } from '../hud';
 import { MissionHazards } from '../mission/MissionHazards';
 import { Anomalies } from '../jarvis/Anomalies';
+import { DestinoBeacon } from '../nav/NavPanel';
 
 export function SharedWorld() {
   return (
@@ -28,6 +31,7 @@ export function SharedWorld() {
         <ReturnBarrier />
         <MissionHazards />
         <Anomalies />
+        <DestinoBeacon />
         <ScoutDrone />
       </Suspense>
     </>
@@ -46,7 +50,13 @@ export function useVRBoot() {
   useEffect(() => {
     if (status === 'loading' || terrainVersion === booted.current || terrainVersion === 0) return;
     booted.current = terrainVersion;
+    // A scenario hill only re-shapes the relief: keep the walk (the costmap and the route react).
+    if (terrainEdit.hillsOnly) {
+      terrainEdit.hillsOnly = false;
+      return;
+    }
     initVR();
+    resetNav();
   }, [status, terrainVersion]);
   return status;
 }

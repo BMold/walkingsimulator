@@ -1,7 +1,7 @@
 // Mission state built ONLY from contract messages (CLAUDE.md §10–11,
 // contratos/INTEGRACION.md §5.4): the 3D/VR view computes nothing here.
 //
-//   telemetria_astronauta → position track, hora_solar, FC, VO₂, speed, load
+//   estado_astronauta (before 2026-11-13: telemetria_astronauta) → position track, hora_solar, FC, VO₂, speed, load
 //   estado_aborto         → O₂, R, O2_minimo, margen (safety colour)
 //   plan_actualizado      → route to walk, planned stops, 4 s notice (motivo ≠ inicial)
 //   abortar               → escape route, destination, notice, 3 s far view
@@ -129,6 +129,7 @@ export function apply(m: Msg, animate: boolean) {
     case 'reinicio':
       resetMission(mission.modo === 'mision');
       break;
+    case 'estado_astronauta':
     case 'telemetria_astronauta': {
       const t = num(m.t, 0);
       const x = num(d.x);
@@ -216,7 +217,8 @@ export function apply(m: Msg, animate: boolean) {
     case 'snapshot': {
       // Backend's state on connect (Motor.estado + last telemetry).
       const est = (m.estado ?? null) as { plan?: Plan; estado_aborto?: Msg; peligros?: Record<string, unknown>[] } | null;
-      const tel = (m.ultima_telemetria as Record<string, Msg> | undefined)?.telemetria_astronauta;
+      const ult = m.ultima_telemetria as Record<string, Msg> | undefined;
+      const tel = ult?.estado_astronauta ?? ult?.telemetria_astronauta;
       if (m.perfil) apply({ ...(m.perfil as Msg), tipo: 'perfil' }, false);
       if (tel) apply(tel, false);
       if (est?.estado_aborto) apply({ ...est.estado_aborto, tipo: 'estado_aborto' }, false);

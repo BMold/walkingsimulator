@@ -129,9 +129,12 @@ class Service:
     async def event(self, evento: dict, channel: str) -> dict:
         if isinstance(evento, dict) and evento.get('tipo') == 'hito':
             return await self.hito(evento, channel)
+        if isinstance(evento, dict) and evento.get('tipo') == 'telemetria_astronauta':
+            # Contract of 2026-11-13: renamed to estado_astronauta (same fields). The Motor only knows the new name.
+            evento = {**evento, 'tipo': 'estado_astronauta'}
         try:
             supported = validate_event(evento)
-            if supported and evento['tipo'] in ('telemetria_astronauta', 'telemetria_rover', 'peligro'):
+            if supported and evento['tipo'] in ('estado_astronauta', 'peligro'):
                 self._check_coords(evento['datos']['x'], evento['datos']['y'])
             async with self.lock:
                 if self.profile is None:
@@ -150,7 +153,7 @@ class Service:
                 for message in messages:
                     check_output(message)
                 self.last_seq, self.last_t = evento['seq'], evento['t']
-                if evento['tipo'].startswith('telemetria_'):
+                if evento['tipo'] == 'estado_astronauta':
                     self.last_telemetry[evento['tipo']] = copy.deepcopy(evento)
                 await asyncio.to_thread(self.journal.record, 'entrada', evento, channel)
                 self.hub.enqueue(evento)

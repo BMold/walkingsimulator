@@ -24,7 +24,7 @@ def main():
     habitat = json.loads((ROOT / 'terreno/manifest.json').read_text(encoding='utf-8'))['habitat']
     event0 = {
         'version':'1.0', 'seq':1,'t':0,'hora_solar':profile['t0_hora_solar'],
-        'tipo':'telemetria_astronauta',
+        'tipo':'estado_astronauta',
         'datos': {'x':habitat['x'],'y':habitat['y'],'sigma_m':0,
                   'O2_restante_L':profile['astronauta']['O2_inicial_L'],
                   'VO2_L_min':0.745,'FC_lpm':111,'velocidad_m_s':0,'carga_kg':0},

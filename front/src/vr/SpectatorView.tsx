@@ -7,15 +7,15 @@
 //    the phone only turns the head, the body moves smoothly from here.
 //  • Runs the dynamic route (useDynamicRoute): leave the optimal polyline and
 //    A* is re-run from your feet to the goal.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Effects } from '../components/canvas/Effects';
 import { connect, ping, type SyncState, type WorldNet } from '../net/socket';
 import { SharedWorld, useVRBoot } from './SharedWorld';
-import { SuitModel } from './SuitModel';
+import { SuitModel, setSuitChoice, suitChoice } from './SuitModel';
 import { useDynamicRoute } from './useDynamicRoute';
-import { EYE_HEIGHT, currentGoal, deployDrone, moveAstronaut, nextGoal, recalculateRoute, setSolarTime, setWorldListener, stepDrone, updateBody, vr } from './vrEngine';
+import { EYE_HEIGHT, cancelarDestino, setDestino, onWorldChange, currentGoal, deployDrone, moveAstronaut, recalculateRoute, setSolarTime, setWorldListener, stepDrone, updateBody, vr } from './vrEngine';
 import { Governor, governorState } from '../render/Governor';
 import { formatHours } from '../lib/marsTime';
 import { suitState } from './suit/state';
@@ -27,7 +27,7 @@ import { siteName } from '../i18n';
 import { Q, toneMap } from '../render/quality';
 import { REAL } from '../lib/realTerrain';
 import { SITES } from '../lib/sites';
-import { VisorHud, bio, bioSnapshot, resetBio, stepBio } from '../hud';
+import { VisorHud, bioSnapshot, stepBio } from '../hud';
 import { buildMissionView, mission, missionActive } from '../mission/mission';
 import { stepMission } from '../mission/driver';
 import { MissionPanel, ModeLinks, useMissionSource } from '../mission/MissionPanel';
@@ -37,6 +37,13 @@ import { JarvisOverlay } from '../jarvis/JarvisOverlay';
 import { HallazgosPanel } from '../jarvis/HallazgosPanel';
 import { jarvis } from '../jarvis/detector';
 import { bindJarvisSync, toggleJarvis } from '../jarvis/sync';
+import { NavMapDom, NavPanel } from '../nav/NavPanel';
+import { navSnapshot, stepNav } from '../nav/nav';
+import { escena, stepEscena } from '../sim/escenario';
+import { EventosTab, NavStats, Section, Toggle } from './SpectatorMenu';
+import { bd, guardarDestino, iniciarBd } from '../jarvis/bd';
+import { RANGOS, mapa } from '../nav/drawNav';
+import { nav } from '../nav/nav';
 
 const keys = new Set<string>();
 /** Look-down-to-walk: tilting the head below `thr` degrees walks forward at `speed` m/s. Set from the laptop. */
@@ -67,6 +74,7 @@ function HostLoop({ thirdPerson }: { thirdPerson: boolean }) {
   const camera = useThree((s) => s.camera);
   const socket = useMemo(() => connect('spectator-host'), []);
   const lastSend = useRef(0);
+  const lastNav = useRef(0);
   const camQ = useMemo(() => new THREE.Quaternion(), []);
   const target = useMemo(() => new THREE.Vector3(), []);
   const camPos = useMemo(() => new THREE.Vector3(), []);
@@ -109,7 +117,11 @@ function HostLoop({ thirdPerson }: { thirdPerson: boolean }) {
     suitState.lookPitch = auto.on ? 0 : lookPitch;
     updateBody(suitState.lookYaw, dt);
     stepDrone(dt);
-    if (!missionActive()) stepBio(dt); // mission: the suit numbers come from the messages
+    if (!missionActive()) {
+      stepBio(dt); // mission: the suit numbers come from the messages
+      stepEscena(dt);
+    }
+    stepNav(dt);
     const v = vel.current;
     if (Number.isFinite(v.px) && dt > 0) {
       const a = 1 - Math.exp(-dt * 12);
@@ -123,6 +135,8 @@ function HostLoop({ thirdPerson }: { thirdPerson: boolean }) {
     const now = performance.now();
     if (now - lastSend.current > 15 && socket.connected) {
       lastSend.current = now;
+      const sendNav = now - lastNav.current > 100;
+      if (sendNav) lastNav.current = now;
       const d = rt.drone;
       socket.volatile.emit('position', {
         x: vr.x,
@@ -137,6 +151,7 @@ function HostLoop({ thirdPerson }: { thirdPerson: boolean }) {
         gaze: { on: gaze.on, speed: gaze.speed, thr: gaze.thr, walking: gaze.walking },
         drone: { x: d.x, y: d.y, z: d.z, heading: d.heading, state: d.state, rotor: d.rotor, scan: d.scanProgress },
         bio: bioSnapshot(),
+        ...(sendNav ? { nav: navSnapshot() } : {}),
       });
     }
   }, -2);
@@ -191,57 +206,35 @@ function worldSnapshot(): WorldNet {
     litres: vr.routeLitres,
     mission: missionActive() ? buildMissionView() : undefined,
     capa: layerState.actual,
+    hazards: useSimStore.getState().hazards,
+    bdRev: bd.rev,
+    aviso: escena.aviso && escena.aviso.hasta > performance.now() ? { id: escena.aviso.id, texto: escena.aviso.texto, detalle: escena.aviso.detalle, nivel: escena.aviso.nivel } : null,
   };
-}
-
-/** Scenario events for the suit (CLAUDE.md §13 style): they change the inputs, the numbers come from the model. */
-function SuitControls() {
-  const [, force] = useState(0);
-  const set = (fn: () => void) => {
-    fn();
-    force((k) => k + 1);
-  };
-  const btn = (on: boolean) => `px-2 py-1 rounded border ${on ? 'border-amber-400/70 text-amber-200' : 'border-slate-600'}`;
-  return (
-    <div className="rounded border border-slate-700/80 p-2 space-y-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-slate-400">Traje · tiempo</span>
-        <div className="flex gap-1">
-          {[1, 10, 30].map((k) => (
-            <button key={k} onClick={() => set(() => (bio.timeScale = k))} className={`px-2 py-0.5 rounded border ${bio.timeScale === k ? 'border-cyan-300 text-cyan-100' : 'border-slate-600 text-slate-400'}`}>
-              ×{k}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        <button onClick={() => set(() => (bio.fatigue = bio.fatigue > 1 ? 1 : 1.3))} className={btn(bio.fatigue > 1)}>
-          Fatiga VO₂ ×1,3
-        </button>
-        <button onClick={() => set(() => (bio.leakLpm = bio.leakLpm > 0 ? 0 : 2))} className={btn(bio.leakLpm > 0)}>
-          Fuga de O₂ 2 L/min
-        </button>
-        <button onClick={() => set(() => (bio.coldManual = !bio.coldManual))} className={btn(bio.coldManual)}>
-          Frío extremo
-        </button>
-        <button onClick={() => set(() => resetBio())} className="px-2 py-1 rounded border border-slate-600">
-          O₂ lleno (40 L)
-        </button>
-      </div>
-    </div>
-  );
 }
 
 export function SpectatorView() {
   const status = useVRBoot();
   const [thirdPerson, setThirdPerson] = useState(true);
-  const [menuOpen, setMenuOpenRaw] = useState(() => localStorage.getItem('ares.menu') !== '0');
-  const setMenuOpen = (f: (o: boolean) => boolean) =>
-    setMenuOpenRaw((o) => {
-      const n = f(o);
-      localStorage.setItem('ares.menu', n ? '1' : '0');
-      return n;
-    });
+  // Flag (experimental): the Blender astronaut of render/astronauta in third person.
+  const [modelo, setModeloRaw] = useState(suitChoice.modelo);
+  const setModelo = (m: 'procedural' | 'render') => {
+    setSuitChoice(m);
+    setModeloRaw(m);
+  };
+  // Menu: a tab (or none = folded). Remembered between visits.
+  const [tab, setTabRaw] = useState<Tab | null>(() => {
+    const t = localStorage.getItem('ares.tab');
+    return t === 'none' ? null : TABS.some((x) => x.id === t) ? (t as Tab) : 'nav';
+  });
+  const lastTab = useRef<Tab>(tab ?? 'nav');
+  const setTab = (t: Tab | null) => {
+    if (t) lastTab.current = t;
+    localStorage.setItem('ares.tab', t ?? 'none');
+    setTabRaw(t);
+  };
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+  const toggleMenu = () => setTab(tabRef.current ? null : lastTab.current);
   const [, force] = useState(0);
   const [gazeUi, setGazeUi] = useState({ on: gaze.on, speed: gaze.speed, thr: gaze.thr });
   const setGaze = (g: Partial<typeof gazeUi>) =>
@@ -265,11 +258,30 @@ export function SpectatorView() {
     rt.stormIntensity = v;
     setEnvUi((e) => ({ ...e, storm: v }));
   };
-  const [hud, setHud] = useState({ connected: false, vr: false, tilt: false, walking: false, fps: 60, scale: 1, ping: NaN, msg: '', dev: 0, goal: '', dist: 0, litres: 0, recalcs: 0, drone: 'docked', head: 0, headAge: 0 });
+  const [hud, setHud] = useState({ storm: 0, connected: false, vr: false, tilt: false, walking: false, fps: 60, scale: 1, ping: NaN, msg: '', dev: 0, goal: '', dist: 0, litres: 0, recalcs: 0, drone: 'docked', head: 0, headAge: 0 });
   const scanned = useSimStore((s) => s.canyonScanned);
   // Free walk only: in mission mode the optimizer replans, not the view.
   useDynamicRoute(status !== 'loading' && !missionActive());
   useMissionSource(status !== 'loading');
+  // Destination picked on the map (card in third person, the visor panel in first person).
+  const [mapUi, setMapUi] = useState({ grande: false, rango: mapa.rango });
+  const zoom = (dir: number) => {
+    const i = Math.max(0, Math.min(RANGOS.length - 1, RANGOS.indexOf(mapa.rango) + dir));
+    mapa.rango = RANGOS[i];
+    setMapUi((m) => ({ ...m, rango: mapa.rango }));
+  };
+  const pick = (x: number, z: number) => {
+    if (missionActive()) {
+      vr.message = 'Modo misión: el destino lo decide el optimizador.';
+      return;
+    }
+    setDestino(x, z);
+    void guardarDestino(x, z);
+  };
+  // JARVIS catalogue in MySQL (XAMPP): the laptop seeds it and writes what the EVA finds.
+  useEffect(() => {
+    if (status !== 'loading') void iniciarBd(true, () => onWorldChange?.());
+  }, [status]);
 
   // Socket: phone rotation in, world out.
   useEffect(() => {
@@ -299,6 +311,7 @@ export function SpectatorView() {
     const id = window.setInterval(async () => {
       const g = currentGoal();
       setHud({
+        storm: rt.stormIntensity,
         connected: socket.connected,
         vr: remote.vrConnected,
         tilt: remote.tiltOnly,
@@ -329,10 +342,9 @@ export function SpectatorView() {
       keys.add(e.code);
       if (e.code === 'KeyV') setThirdPerson((t) => !t);
       if (e.code === 'KeyJ') (toggleJarvis(), force((k) => k + 1));
-      if (e.code === 'KeyM') setMenuOpen((o) => !o);
+      if (e.code === 'KeyM') toggleMenu();
       if (e.code === 'KeyF' || e.code === 'Space') deployDrone();
       if (e.code === 'KeyR' && !missionActive()) recalculateRoute('recalculada a pedido');
-      if (e.code === 'KeyN') nextGoal();
       if (e.code === 'KeyG') setGaze({ on: !gaze.on });
       if (e.code === 'KeyL') setEnvUi((v) => ({ ...v, labels: !v.labels }));
       if (e.code === 'BracketRight' || e.code === 'NumpadAdd' || e.code === 'Equal') setGaze({ speed: gaze.speed + 0.5 });
@@ -345,7 +357,7 @@ export function SpectatorView() {
     let lx = 0;
     let ly = 0;
     const pd = (e: PointerEvent) => {
-      if ((e.target as HTMLElement).closest('button')) return;
+      if ((e.target as HTMLElement).closest('button, [data-ui]')) return;
       drag = true;
       lx = e.clientX;
       ly = e.clientY;
@@ -374,6 +386,8 @@ export function SpectatorView() {
     };
   }, []);
 
+  const btn = 'px-2.5 py-1.5 rounded-lg border text-[12.5px] transition hover:bg-white/5';
+  const tabs = TABS.filter((t) => !t.real || REAL);
   return (
     <div className={`fixed inset-0 bg-black select-none ${envUi.labels ? '' : 'no-labels'}`}>
       <Canvas
@@ -383,123 +397,223 @@ export function SpectatorView() {
         camera={{ fov: 62, near: 0.08, far: 160000 }}
       >
         <SharedWorld />
-        <SuitModel firstPerson={!thirdPerson} />
+        <SuitModel firstPerson={!thirdPerson} modelo={modelo} />
         <HostLoop thirdPerson={thirdPerson} />
         {/* Suit holograms: on the visor in first person, beside the astronaut in third person. */}
         <VisorHud anchor={thirdPerson ? 'body' : 'visor'} fxStrength={thirdPerson ? 0.6 : 1} />
-        {/* JARVIS: detection frames on the objects; heading tape on the visor in first person. */}
+        {/* JARVIS: detection frames on the objects; heading tape and the mini map on the visor in first person. */}
         <JarvisOverlay anchor={thirdPerson ? 'world' : 'visor'} />
+        {!thirdPerson && <NavPanel onPick={pick} />}
         <Governor />
         <Effects />
       </Canvas>
 
-      {/* Left menu: folds down to its header (M) so the view keeps the screen. */}
-      <div className={`absolute top-3 left-3 glass p-3 text-[11px] text-slate-200 space-y-1.5 max-h-[calc(100vh-24px)] overflow-y-auto ${menuOpen ? 'w-[min(360px,calc(100vw-24px))]' : 'w-auto'}`}>
-        <div className="flex items-center justify-between gap-3">
-          <div className="font-display tracking-[0.25em] text-cyan-200 text-sm">ARES-TWIN{menuOpen ? ' · ESPECTADOR' : ''}</div>
-          <button onClick={() => setMenuOpen((o) => !o)} title="Mostrar u ocultar el menú (M)" className="px-2 py-0.5 rounded border border-slate-600 text-slate-300">
-            {menuOpen ? '◀ ocultar' : '☰ menú'}
+      {/* Top bar: always there, small. */}
+      <div className="absolute top-3 left-3 right-3 flex items-start gap-2 pointer-events-none">
+        <div className="glass pointer-events-auto flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] text-slate-200">
+          <button onClick={toggleMenu} title="Mostrar u ocultar el menú (M)" className={`${btn} ${tab ? 'border-cyan-300/70 text-cyan-100' : 'border-slate-600'}`}>
+            ☰ Menú
+          </button>
+          <span className="font-display tracking-[0.22em] text-cyan-200 text-sm hidden md:inline">ARES-TWIN</span>
+          <span className="flex items-center gap-2 font-mono text-[11.5px]" title="Servidor de sincronización y casco (celular)">
+            <span className={hud.connected ? 'text-emerald-300' : 'text-red-300'}>● servidor</span>
+            <span className={hud.vr ? 'text-emerald-300' : 'text-slate-500'}>● casco</span>
+            <span className="text-slate-500">{Number.isFinite(hud.ping) ? `${hud.ping.toFixed(0)} ms` : ''}</span>
+          </span>
+          <button onClick={() => (toggleJarvis(), force((k) => k + 1))} title="Vista JARVIS o normal en el visor (J)" className={`${btn} ${jarvis.on ? 'border-fuchsia-400/80 text-fuchsia-200 bg-fuchsia-500/10' : 'border-slate-600 text-slate-400'}`}>
+            {jarvis.on ? '◆ JARVIS' : '○ Normal'}
+          </button>
+          <button onClick={() => setThirdPerson((t) => !t)} title="Primera o tercera persona (V)" className={`${btn} border-slate-600`}>
+            {thirdPerson ? '👁 3ª persona' : '👁 1ª persona'}
           </button>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => (toggleJarvis(), force((k) => k + 1))} title="Vista JARVIS o normal (J)" className={`px-2 py-0.5 rounded border ${jarvis.on ? 'border-fuchsia-400/80 text-fuchsia-200' : 'border-slate-600 text-slate-400'}`}>
-            {jarvis.on ? '◆ JARVIS' : '○ Vista normal'} (J)
-          </button>
-          <span className={`font-mono ${hud.connected ? 'text-emerald-300' : 'text-red-300'}`}>●</span>
-          <span className={`font-mono ${hud.vr ? 'text-emerald-300' : 'text-slate-500'}`}>casco</span>
-        </div>
-        {menuOpen && (
-        <>
-        {REAL && <ModeLinks />}
-        <div className="flex gap-3 font-mono">
-          <span className={hud.connected ? 'text-emerald-300' : 'text-red-300'}>● servidor</span>
-          <span className={hud.vr ? 'text-emerald-300' : 'text-slate-500'}>● casco VR {hud.vr ? 'conectado' : 'no conectado'}</span>
-          <span className="text-slate-400">{Number.isFinite(hud.ping) ? `${hud.ping.toFixed(0)} ms` : '—'}</span>
-        </div>
-        <div className="font-mono">
-          Casco: rumbo <b className="text-cyan-200">{hud.head.toFixed(0)}°</b>{' '}
-          {hud.vr ? (hud.headAge < 500 ? <span className="text-emerald-300">· en vivo</span> : <span className="text-amber-300">· sin datos del celular</span>) : <span className="text-slate-500">· mouse / Q-E</span>}
-        </div>
-        {!missionActive() && (
-          <>
-            <div>
-              Objetivo: <b className="text-amber-200">{hud.goal}</b> · {hud.dist.toFixed(0)} m · ruta {hud.litres.toFixed(1)} L de O₂
-            </div>
-            <div className="text-slate-400">
-              Desvío de la ruta óptima: <span className={hud.dev > 3.5 ? 'text-amber-300' : 'text-slate-200'}>{hud.dev.toFixed(1)} m</span> (recalcula sobre 3,5 m) · {hud.recalcs} cálculos A*
-            </div>
-          </>
-        )}
-        <div className="text-emerald-200/90 leading-snug">{hud.msg}</div>
-        {REAL && SITES.length > 0 && (
-          <div className="text-slate-400">
-            Terreno real 480 m · {SITES.length} sitios CRISM desde <b className="text-slate-200">{SITES[0].source === 'backend' ? 'el backend' : 'terreno/sitios.json'}</b>
-          </div>
-        )}
-        <div className="flex flex-wrap gap-1.5 pt-1">
-          <button onClick={() => deployDrone()} disabled={hud.drone !== 'docked'} className="px-2 py-1 rounded border border-cyan-400/60 text-cyan-100 disabled:opacity-40">
-            {hud.drone === 'docked' ? (REAL ? 'Dron: explorar el objetivo (F)' : scanned ? 'Dron: re-escanear cañón (F)' : 'Dron: escanear cañón (F)') : `Dron: ${hud.drone}`}
-          </button>
-          <button onClick={() => setThirdPerson((t) => !t)} className="px-2 py-1 rounded border border-slate-600">
-            {thirdPerson ? '1ª persona (V)' : '3ª persona (V)'}
-          </button>
-          {!missionActive() && (
-            <button onClick={() => recalculateRoute('recalculada a pedido')} className="px-2 py-1 rounded border border-slate-600">
-              Recalcular (R)
-            </button>
-          )}
-        </div>
-        <div className="rounded border border-slate-700/80 p-2 space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <button onClick={() => setGaze({ on: !gazeUi.on })} className={`px-2 py-1 rounded border ${gazeUi.on ? 'border-emerald-400/70 text-emerald-200' : 'border-slate-600 text-slate-400'}`}>
-              Mirar abajo para avanzar: {gazeUi.on ? 'SÍ' : 'NO'} (G)
-            </button>
-            <span className={`font-mono ${hud.walking ? 'text-emerald-300' : 'text-slate-500'}`}>{hud.walking ? '▼ avanzando' : 'quieto'}</span>
-          </div>
-          <label className="flex items-center gap-2">
-            <span className="w-24 text-slate-400">Velocidad</span>
-            <input type="range" min={0.5} max={10} step={0.5} value={gazeUi.speed} onChange={(e) => setGaze({ speed: +e.target.value })} className="flex-1 accent-cyan-400" />
-            <span className="w-16 text-right font-mono text-cyan-200">{gazeUi.speed.toFixed(1)} m/s</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <span className="w-24 text-slate-400">Mirar abajo de</span>
-            <input type="range" min={10} max={60} step={1} value={gazeUi.thr} onChange={(e) => setGaze({ thr: +e.target.value })} className="flex-1 accent-cyan-400" />
-            <span className="w-16 text-right font-mono text-cyan-200">{gazeUi.thr}°</span>
-          </label>
-          <div className="text-[10px] text-slate-500">[ / ] o − / +: bajar o subir la velocidad · una persona camina a ~1,4 m/s</div>
-        </div>
-        {missionActive() ? <MissionPanel /> : <SuitControls />}
-        {REAL && <LayerControls />}
-        <div className="rounded border border-slate-700/80 p-2 space-y-1.5">
-          <label className="flex items-center gap-2">
-            <span className="w-24 text-slate-400">Hora solar</span>
-            <input type="range" min={5.6} max={18.9} step={0.05} value={envUi.ltst} onChange={(e) => setLtst(+e.target.value)} className="flex-1 accent-amber-400" />
-            <span className="w-16 text-right font-mono text-amber-200">{formatHours(envUi.ltst)}</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <span className="w-24 text-slate-400">Polvo en el aire</span>
-            <input type="range" min={0} max={1} step={0.02} value={envUi.storm} onChange={(e) => setStorm(+e.target.value)} className="flex-1 accent-amber-400" />
-            <span className="w-16 text-right font-mono text-amber-200">τ {(0.6 + 3.4 * envUi.storm).toFixed(1)}</span>
-          </label>
-          <div className="flex items-center justify-between gap-2">
-            <button onClick={() => setEnvUi((v) => ({ ...v, labels: !v.labels }))} className="px-2 py-1 rounded border border-slate-600">
-              Etiquetas: {envUi.labels ? 'SÍ' : 'NO'} (L)
-            </button>
-            <span className="font-mono text-slate-500">
-              {hud.fps.toFixed(0)} fps · resolución {(hud.scale * 100).toFixed(0)} %
-            </span>
-          </div>
-        </div>
-        <div className="text-[10px] text-slate-500 leading-snug">
-          WASD / flechas: caminar hacia donde mira el casco · Shift: más rápido · N: siguiente objetivo
-          {!hud.vr && ' · sin casco: arrastrá el mouse o Q/E para girar'}
-          {hud.vr && hud.tilt && ' · el celular no tiene giroscopio: girá con Q/E o el mouse'} · J: JARVIS / normal · M: menú
-        </div>
-        <HallazgosPanel />
-        </>
-        )}
+        {hud.msg && <div className="glass hidden lg:block pointer-events-none px-3 py-2 text-[12px] text-emerald-200/90 leading-snug max-w-[440px]">{hud.msg}</div>}
       </div>
-      {status === 'loading' && <div className="absolute bottom-4 left-1/2 -translate-x-1/2 glass px-3 py-1.5 text-[11px] text-cyan-200">{REAL ? 'Cargando el terreno real (DEM, HiRISE, sitios CRISM)…' : 'Cargando Marte desde NASA Mars Trek…'}</div>}
+
+      {/* Side menu: icon tabs + the open tab. Folds away with M or ☰. */}
+      {tab && (
+        <div className="absolute top-[64px] left-3 bottom-3 flex gap-2 pointer-events-none">
+          <nav className="glass pointer-events-auto flex flex-col gap-1 p-1.5 self-start">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                title={t.label}
+                className={`relative w-[58px] rounded-lg py-1.5 flex flex-col items-center gap-0.5 transition ${tab === t.id ? 'bg-cyan-400/20 text-cyan-100' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
+              >
+                <span className="text-lg leading-none">{t.icon}</span>
+                <span className="text-[10px] leading-none">{t.short}</span>
+                {t.id === 'hallazgos' && jarvis.hallazgos.length > 0 && <span className="absolute top-0.5 right-1 min-w-[16px] h-4 px-1 rounded-full bg-fuchsia-500 text-[10px] text-white leading-4">{jarvis.hallazgos.length}</span>}
+              </button>
+            ))}
+            <button onClick={() => setTab(null)} title="Ocultar el menú (M)" className="w-[58px] rounded-lg py-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-200 text-[11px]">
+              ◀
+            </button>
+          </nav>
+          <div className="glass pointer-events-auto w-[min(390px,calc(100vw-110px))] overflow-y-auto p-3.5 text-[12.5px] text-slate-200 space-y-4">
+            <h2 className="text-[15px] font-semibold text-cyan-100">{TABS.find((t) => t.id === tab)?.label}</h2>
+
+            {tab === 'nav' && (
+              <>
+                <NavStats />
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => deployDrone()} disabled={hud.drone !== 'docked'} className={`${btn} border-cyan-400/60 text-cyan-100 disabled:opacity-40`}>
+                    {hud.drone === 'docked' ? (REAL ? '🛸 Dron al objetivo (F)' : scanned ? '🛸 Re-escanear (F)' : '🛸 Escanear cañón (F)') : `🛸 ${hud.drone}`}
+                  </button>
+                  {!missionActive() && (
+                    <>
+                      <button onClick={() => recalculateRoute('recalculada a pedido')} className={`${btn} border-slate-600`}>
+                        ↻ Recalcular ruta (R)
+                      </button>
+                      {nav.code === 'D' && (
+                        <button onClick={() => cancelarDestino()} className={`${btn} border-amber-400/60 text-amber-200`}>
+                          ⌂ Volver a la base
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+                <div className="text-[12px] text-slate-400 space-y-1">
+                  <div>
+                    Rumbo del casco <b className="text-cyan-200 font-mono">{hud.head.toFixed(0)}°</b>{' '}
+                    {hud.vr ? hud.headAge < 500 ? <span className="text-emerald-300">· en vivo</span> : <span className="text-amber-300">· sin datos del celular</span> : <span>· mouse / Q-E</span>}
+                  </div>
+                  {!missionActive() && (
+                    <div>
+                      Ruta {hud.litres.toFixed(1)} L de O₂ · {hud.recalcs} cálculos A* (recalcula al desviarte más de 3,5 m)
+                    </div>
+                  )}
+                  {REAL && SITES.length > 0 && (
+                    <div>
+                      Terreno real 480 m · {SITES.length} sitios CRISM desde {SITES[0].source === 'backend' ? 'el backend' : 'terreno/sitios.json'}
+                    </div>
+                  )}
+                  <div className="text-emerald-200/90 lg:hidden">{hud.msg}</div>
+                </div>
+              </>
+            )}
+
+            {tab === 'sim' && <EventosTab />}
+
+            {tab === 'mision' && (
+              <>
+                <ModeLinks />
+                {missionActive() ? <MissionPanel /> : <div className="text-[12px] text-slate-400 leading-snug">Modo libre: caminás vos y A* replanifica. Elegí <b>Misión</b> para reproducir el registro del guion, o <b>Vivo</b> para conectarte al backend.</div>}
+              </>
+            )}
+
+            {tab === 'control' && (
+              <>
+                <Section title="Caminar sin manos (Cardboard)">
+                  <Toggle on={gazeUi.on} onClick={() => setGaze({ on: !gazeUi.on })} label="Mirar abajo para avanzar" hint={hud.walking ? '▼ avanzando' : 'quieto'} />
+                  <label className="flex items-center gap-2">
+                    <span className="w-28 text-slate-400">Velocidad</span>
+                    <input type="range" min={0.5} max={10} step={0.5} value={gazeUi.speed} onChange={(e) => setGaze({ speed: +e.target.value })} className="flex-1 accent-cyan-400" />
+                    <span className="w-16 text-right font-mono text-cyan-200">{gazeUi.speed.toFixed(1)} m/s</span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <span className="w-28 text-slate-400">Mirar abajo de</span>
+                    <input type="range" min={10} max={60} step={1} value={gazeUi.thr} onChange={(e) => setGaze({ thr: +e.target.value })} className="flex-1 accent-cyan-400" />
+                    <span className="w-16 text-right font-mono text-cyan-200">{gazeUi.thr}°</span>
+                  </label>
+                  <div className="text-[11px] text-slate-500">Una persona camina a ~1,4 m/s; el plan usa el ritmo del contrato (~0,9 m/s en plano).</div>
+                </Section>
+                <Section title="Teclado">
+                  <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[12px]">
+                    {KEYS.map(([k, d]) => (
+                      <Fragment key={k}>
+                        <kbd className="font-mono text-cyan-200 bg-slate-800/70 border border-slate-600 rounded px-1.5 text-center">{k}</kbd>
+                        <span className="text-slate-300">{d}</span>
+                      </Fragment>
+                    ))}
+                  </div>
+                  {!hud.vr && <div className="text-[11px] text-slate-500">Sin casco: arrastrá el mouse o usá Q / E para girar.</div>}
+                  {hud.vr && hud.tilt && <div className="text-[11px] text-amber-300">El celular no tiene giroscopio: girá con Q / E o el mouse.</div>}
+                </Section>
+              </>
+            )}
+
+            {tab === 'entorno' && (
+              <>
+                <Section title="Escena">
+                  <label className="flex items-center gap-2">
+                    <span className="w-28 text-slate-400">Hora solar</span>
+                    <input type="range" min={5.6} max={18.9} step={0.05} value={envUi.ltst} onChange={(e) => setLtst(+e.target.value)} className="flex-1 accent-amber-400" />
+                    <span className="w-14 text-right font-mono text-amber-200">{formatHours(envUi.ltst)}</span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <span className="w-28 text-slate-400">Polvo en el aire</span>
+                    <input type="range" min={0} max={1} step={0.02} value={hud.storm} onChange={(e) => setStorm(+e.target.value)} className="flex-1 accent-amber-400" />
+                    <span className="w-14 text-right font-mono text-amber-200">τ {(0.6 + 3.4 * hud.storm).toFixed(1)}</span>
+                  </label>
+                  <Toggle on={envUi.labels} onClick={() => setEnvUi((v) => ({ ...v, labels: !v.labels }))} label="Etiquetas en el terreno (L)" />
+                  <Toggle on={modelo === 'render'} onClick={() => setModelo(modelo === 'render' ? 'procedural' : 'render')} label="Astronauta de render/ (experimental)" hint="3ª persona" />
+                  <div className="font-mono text-[11px] text-slate-500">
+                    {hud.fps.toFixed(0)} fps · resolución {(hud.scale * 100).toFixed(0)} %
+                  </div>
+                </Section>
+                {REAL && (
+                  <Section title="Capas del paquete de terreno">
+                    <LayerControls />
+                  </Section>
+                )}
+              </>
+            )}
+
+            {tab === 'hallazgos' && <HallazgosPanel />}
+          </div>
+        </div>
+      )}
+
+      {/* Laptop: the suit's navigation map as a corner card (third person; in first person it is on the visor, also clickable). */}
+      {status !== 'loading' && (
+        <div data-ui className={`absolute bottom-3 right-3 ${mapUi.grande ? 'w-[min(420px,40vw)]' : 'w-[clamp(190px,17vw,260px)]'} glass p-1.5 space-y-1`}>
+          <div className="flex items-center gap-1 text-[11.5px] text-slate-300">
+            <button onClick={() => zoom(-1)} title="Acercar" className="w-6 h-6 rounded border border-slate-600 hover:bg-white/10">＋</button>
+            <button onClick={() => zoom(1)} title="Alejar" className="w-6 h-6 rounded border border-slate-600 hover:bg-white/10">－</button>
+            <span className="font-mono text-slate-400 px-1">{mapUi.rango} m</span>
+            <span className="flex-1" />
+            {nav.code === 'D' && (
+              <button onClick={() => cancelarDestino()} title="Quitar el destino marcado" className="px-1.5 h-6 rounded border border-amber-400/60 text-amber-200 hover:bg-amber-400/10">✕ destino</button>
+            )}
+            <button onClick={() => setMapUi((m) => ({ ...m, grande: !m.grande }))} title="Agrandar o achicar" className="w-6 h-6 rounded border border-slate-600 hover:bg-white/10">
+              {mapUi.grande ? '⤡' : '⤢'}
+            </button>
+          </div>
+          {thirdPerson || mapUi.grande ? (
+            <NavMapDom className="w-full h-auto" onPick={pick} />
+          ) : (
+            <div className="text-[11px] text-slate-400 px-1 pb-0.5">El mapa está en el visor: hacé clic en él para marcar un destino.</div>
+          )}
+          <div className="text-[10.5px] text-slate-500 px-1">{missionActive() ? 'Modo misión: destino del optimizador' : 'Clic en el mapa: ir a ese punto (A*)'}</div>
+        </div>
+      )}
+      {status === 'loading' && <div className="absolute bottom-4 left-1/2 -translate-x-1/2 glass px-3 py-1.5 text-[12px] text-cyan-200">{REAL ? 'Cargando el terreno real (DEM, HiRISE, sitios CRISM)…' : 'Cargando Marte desde NASA Mars Trek…'}</div>}
     </div>
   );
 }
+
+type Tab = 'nav' | 'sim' | 'mision' | 'control' | 'entorno' | 'hallazgos';
+const TABS: { id: Tab; icon: string; short: string; label: string; real?: boolean }[] = [
+  { id: 'nav', icon: '🧭', short: 'Ruta', label: 'Navegación' },
+  { id: 'sim', icon: '⚡', short: 'Simular', label: 'Simular eventos' },
+  { id: 'mision', icon: '🚀', short: 'Misión', label: 'Misión y fuentes de datos', real: true },
+  { id: 'control', icon: '🎮', short: 'Control', label: 'Control del astronauta' },
+  { id: 'entorno', icon: '☀️', short: 'Entorno', label: 'Entorno y capas' },
+  { id: 'hallazgos', icon: '★', short: 'Hallazgos', label: 'Hallazgos JARVIS' },
+];
+
+const KEYS: [string, string][] = [
+  ['W A S D', 'caminar hacia donde mira el casco'],
+  ['Shift', 'más rápido'],
+  ['Q / E', 'girar (sin casco)'],
+  ['V', '1ª / 3ª persona'],
+  ['J', 'vista JARVIS / normal'],
+  ['M', 'mostrar u ocultar el menú'],
+  ['F', 'lanzar el dron'],
+  ['R', 'recalcular la ruta'],
+  ['clic en el mapa', 'marcar destino (sin destino: vuelve a la base)'],
+  ['G', 'mirar abajo para avanzar'],
+  ['[ / ]', 'bajar / subir la velocidad'],
+  ['L', 'etiquetas'],
+];
