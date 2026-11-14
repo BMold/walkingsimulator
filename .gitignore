@@ -1,4 +1,3 @@
-datos_crudos/*
-!datos_crudos/LEEME.md
+
 __pycache__/
-*.pyc
+*.env
