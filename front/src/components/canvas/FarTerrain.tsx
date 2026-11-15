@@ -19,13 +19,15 @@ const sstep = (a: number, b: number, x: number) => {
   return t * t * (3 - 2 * t);
 };
 
-/** Ground height around the site: the tile's own border plane first, then the real relief. */
+/** Join the square tile's border plane to the regional relief outside the tile. */
 function farHeight(x: number, z: number): number {
   const r = Math.hypot(x, z);
   // The tile ends on the plane tiltAt − 2; under the tile this mesh stays a little lower.
   const inside = Math.max(Math.abs(x), Math.abs(z));
   const plane = tiltAt(Math.max(-700, Math.min(700, x)), Math.max(-700, Math.min(700, z))) - 2 - 0.8 * (1 - sstep(HALF - 3, HALF + 1.5, inside));
-  const h = plane + (regionalHeight(x, z) - 2 - plane) * sstep(HALF + 8, HALF + 500, r);
+  // The local tile is square. A radial blend starts raising the regional mesh
+  // inside its corners and can cut through the walkable surface and the suit.
+  const h = plane + (regionalHeight(x, z) - 2 - plane) * sstep(HALF + 8, HALF + 500, inside);
   return h - (r * r) / (2 * MARS_RADIUS);
 }
 

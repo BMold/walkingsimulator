@@ -119,6 +119,7 @@ async function loadOrtho(url: string, n = 1024): Promise<{ data: Float32Array; n
     c.width = c.height = n;
     const ctx = c.getContext('2d', { willReadFrequently: true })!;
     ctx.drawImage(bmp, 0, 0, n, n);
+    bmp.close();
     const px = ctx.getImageData(0, 0, n, n).data;
     const hist = new Uint32Array(256);
     for (let k = 0; k < n * n; k++) hist[px[k * 4 + 1]]++;
@@ -137,10 +138,21 @@ async function loadOrtho(url: string, n = 1024): Promise<{ data: Float32Array; n
   }
 }
 
-export async function loadRealPackage(): Promise<RealPackage> {
-  const manifest = await backendOr('/api/v1/terreno', '/terreno/manifest.json', (r) => r.json() as Promise<ManifestReal>);
-  const sitios = await backendOr('/api/v1/terreno/sitios', '/terreno/sitios.json', async (r) => validSites(await r.json()));
-  const elev = await backendOr('/api/v1/terreno/capas/elevacion', '/terreno/elevacion.bin', (r) => r.arrayBuffer());
+let pendingPackage: Promise<RealPackage> | null = null;
+
+export function loadRealPackage(): Promise<RealPackage> {
+  // Share concurrent loads (including React StrictMode's effect replay).
+  pendingPackage ??= readRealPackage().finally(() => { pendingPackage = null; });
+  return pendingPackage;
+}
+
+async function readRealPackage(): Promise<RealPackage> {
+  const [manifest, sitios, elev, orto] = await Promise.all([
+    backendOr('/api/v1/terreno', '/terreno/manifest.json', (r) => r.json() as Promise<ManifestReal>),
+    backendOr('/api/v1/terreno/sitios', '/terreno/sitios.json', async (r) => validSites(await r.json())),
+    backendOr('/api/v1/terreno/capas/elevacion', '/terreno/elevacion.bin', (r) => r.arrayBuffer()),
+    loadOrtho('/terreno/ortofoto.jpg'),
+  ]);
   const m = manifest.value;
   const n = m.filas * m.columnas;
   if (elev.value.byteLength !== n * 4) throw new Error(`elevacion.bin: ${elev.value.byteLength} bytes, se esperaban ${n * 4}`);
@@ -149,7 +161,6 @@ export async function loadRealPackage(): Promise<RealPackage> {
   const dv = new DataView(elev.value);
   const elevacion = new Float32Array(n);
   for (let k = 0; k < n; k++) elevacion[k] = dv.getFloat32(k * 4, true);
-  const orto = await loadOrtho('/terreno/ortofoto.jpg');
   return { manifest: m, sitios: sitios.value, elevacion, orto, fuenteSitios: sitios.from, fuenteCapas: elev.from };
 }
 

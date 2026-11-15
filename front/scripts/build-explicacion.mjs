@@ -1,13 +1,14 @@
 // Generates the root explicacion.html as a single self-contained file, so it also
 // works when opened directly from disk (file://), without a dev server.
 import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 const root = new URL('../', import.meta.url);
 const read = (path) => readFileSync(new URL(path, root), 'utf8');
 
 const bundle = await build({
-  entryPoints: [new URL('src/explicacion/main.ts', root).pathname.replace(/^\/([A-Za-z]:)/, '$1')],
+  entryPoints: [fileURLToPath(new URL('src/explicacion/main.ts', root))],
   bundle: true,
   format: 'iife',
   minify: true,

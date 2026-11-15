@@ -23,7 +23,7 @@ export function useMarsTrek() {
       setSiteLocation(GALE.lat, GALE.lon);
       buildHeightfield(null, null, 'procedural');
       bumpTerrain();
-      initSimulation();
+      initSimulation({ planTour: false });
       useSimStore.setState({ trekStatus: status, trekMessage: message, trekPreview: null, siteInfo: null, sol: GALE.sol ?? 0 });
     };
 
@@ -50,7 +50,7 @@ export function useMarsTrek() {
           });
           regenRocks([BASE_A, ...SITES], 7);
           bumpTerrain();
-          initSimulation();
+          initSimulation({ planTour: false });
           const slope = (Math.atan(Math.hypot(plane.east, plane.north)) * 180) / Math.PI;
           useSimStore.setState({
             trekStatus: 'online',
@@ -84,7 +84,7 @@ export function useMarsTrek() {
         setSiteLocation(data.site.lat, data.site.lon);
         buildHeightfield(data.dem, data.albedo, `NASA Mars Trek · ${region.name}`, { hiRes: data.hiRes, tilt: data.tilt });
         bumpTerrain();
-        initSimulation();
+        initSimulation({ planTour: false });
         const s = data.site;
         useSimStore.setState({
           trekStatus: 'online',
@@ -110,12 +110,11 @@ export function useMarsTrek() {
   }, [regionId]);
 
   // A new EVA start time only re-runs the mission on the same terrain.
-  const first = useRef(true);
+  const previousStartLtst = useRef(startLtst);
   useEffect(() => {
-    if (first.current) {
-      first.current = false;
-      return;
-    }
-    initSimulation();
+    if (previousStartLtst.current === startLtst) return;
+    previousStartLtst.current = startLtst;
+    if (useSimStore.getState().trekStatus === 'loading') return;
+    initSimulation({ planTour: false });
   }, [startLtst]);
 }

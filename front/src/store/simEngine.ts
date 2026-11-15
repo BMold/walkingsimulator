@@ -410,7 +410,7 @@ function buildTourRoute(start: XZ, prefix: XZ[], ltstAtStart: number) {
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
-export function initSimulation() {
+export function initSimulation({ planTour = true }: { planTour?: boolean } = {}) {
   const st = S();
   const keep = { lat: rt.lat, lon: rt.lon };
   Object.assign(rt, freshRuntime());
@@ -442,6 +442,15 @@ export function initSimulation() {
   revealCircle(BASE_A.x, BASE_A.z, 32);
   for (const s of SITES) if (!s.needsScan) revealCircle(s.x, s.z, 8);
   recost();
+  // The walking/VR engine chooses its own destination and discards the legacy tour.
+  if (!planTour) {
+    rt.route = makeRoute([BASE_A]);
+    rt.astro.x = rt.rover.x = BASE_A.x;
+    rt.astro.z = rt.rover.z = BASE_A.z;
+    rt.astro.y = rt.rover.y = heightAt(BASE_A.x, BASE_A.z);
+    bumpRoute();
+    return;
+  }
   const plan = buildTourRoute(BASE_A, [], rt.startLtst);
   const h = routeHeading(rt.route, 2);
   if (!Number.isNaN(h)) rt.rover.heading = rt.astro.heading = h;

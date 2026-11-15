@@ -258,6 +258,9 @@ vec3 gExtraEmit = vec3(0.0); float gSun = 1.0; float gAo = 1.0; vec2 gNxy = vec2
       .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
+${site ? '' : `// The regional mesh overlaps the square tile geometrically. Only the local
+// DEM may draw inside it; a narrow overlap at the skirt hides the join.
+if (max(abs(vWPos.x), abs(vWPos.z)) < ${(HALF - 0.5).toFixed(1)}) discard;`}
 {
   vec3 geoN = normalize(vWNormal);
   float camD = distance(cameraPosition, vWPos);
