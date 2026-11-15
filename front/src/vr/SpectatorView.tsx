@@ -535,6 +535,9 @@ export function SpectatorView() {
 
             {tab === 'entorno' && (
               <>
+                <Section title="TIFF y modelos de elevación">
+                  <a href="/rasters.html" target="_blank" rel="noopener noreferrer" className={`${btn} inline-block border-cyan-400/60 text-cyan-100`}>Ver TIFF y DEM · 2D / 3D ↗</a>
+                </Section>
                 <Section title="Escena">
                   <label className="flex items-center gap-2">
                     <span className="w-28 text-slate-400">Hora solar</span>

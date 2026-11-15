@@ -1,17 +1,16 @@
 // Laptop: choose the package layer draped over the relief (the phone follows), and the TES value.
-import { useEffect, useState } from 'react';
-import { CAPAS, layerState, loadTes, setLayer, type CapaId } from './layers';
+import { useEffect, useSyncExternalStore } from 'react';
+import { CAPAS, layerState, layerRevision, subscribeLayers, loadTes, setLayer, type CapaId } from './layers';
 import { onWorldChange } from '../vr/vrEngine';
 
 export function LayerControls() {
-  const [cur, setCur] = useState<CapaId>(layerState.actual);
-  const [, force] = useState(0);
+  useSyncExternalStore(subscribeLayers, layerRevision);
   useEffect(() => {
-    loadTes().then(() => force((k) => k + 1));
+    void loadTes().catch(() => {});
   }, []);
   const choose = (id: CapaId) => {
-    setCur(id);
-    setLayer(id).then(() => force((k) => k + 1));
+    try { localStorage.setItem('ares.terrainLayer', id); } catch { /* Storage is optional. */ }
+    void setLayer(id);
     onWorldChange?.(); // the phone shows the same layer
   };
   const tes = layerState.tes;
@@ -23,7 +22,8 @@ export function LayerControls() {
           <button
             key={c.id}
             onClick={() => choose(c.id)}
-            className={`px-1.5 py-0.5 rounded border text-[10px] ${cur === c.id ? 'border-cyan-300 text-cyan-100' : 'border-slate-600 text-slate-400'}`}
+            aria-pressed={layerState.actual === c.id}
+            className={`px-1.5 py-0.5 rounded border text-[10px] ${layerState.actual === c.id ? 'border-cyan-300 text-cyan-100' : 'border-slate-600 text-slate-400'}`}
           >
             {c.nombre}
           </button>

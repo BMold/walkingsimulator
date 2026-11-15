@@ -17,6 +17,7 @@ import { ReturnBarrier } from '../hud';
 import { MissionHazards } from '../mission/MissionHazards';
 import { Anomalies } from '../jarvis/Anomalies';
 import { DestinoBeacon } from '../nav/NavPanel';
+import { initTerrainLayer } from '../lib/layers';
 
 export function SharedWorld() {
   return (
@@ -44,6 +45,7 @@ export function SharedWorld() {
  */
 export function useVRBoot() {
   useMarsTrek();
+  useEffect(initTerrainLayer, []);
   const status = useSimStore((s) => s.trekStatus);
   const terrainVersion = useSimStore((s) => s.terrainVersion);
   const booted = useRef(-1);

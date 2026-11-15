@@ -10,10 +10,16 @@
 import * as THREE from 'three';
 import { MINERALES, type Mineral } from './realTerrain';
 
-export type CapaId = 'ninguna' | 'minerales' | Mineral | 'pendiente';
+export type RasterId = 'raster-tes' | 'raster-usgs' | 'raster-terreno' | 'raster-mid' | 'raster-far';
+export type CapaId = 'ninguna' | 'minerales' | Mineral | 'pendiente' | RasterId;
 
 export const CAPAS: { id: CapaId; nombre: string }[] = [
   { id: 'ninguna', nombre: 'Sin capa' },
+  { id: 'raster-tes', nombre: 'Textura TIFF térmico' },
+  { id: 'raster-usgs', nombre: 'Textura DEM USGS' },
+  { id: 'raster-terreno', nombre: 'Textura DEM misión' },
+  { id: 'raster-mid', nombre: 'Textura DEM regional' },
+  { id: 'raster-far', nombre: 'Textura DEM MOLA' },
   { id: 'minerales', nombre: 'Minerales CRISM' },
   { id: 'sulfatos', nombre: 'Sulfatos' },
   { id: 'filosilicatos', nombre: 'Filosilicatos' },
@@ -41,9 +47,18 @@ const data = new Uint8Array(N * N * 4);
 export const layerTexture = new THREE.DataTexture(data, N, N, THREE.RGBAFormat, THREE.UnsignedByteType);
 layerTexture.magFilter = THREE.LinearFilter;
 layerTexture.minFilter = THREE.LinearFilter;
-export const layerUniforms = { uLayer: { value: layerTexture as THREE.Texture }, uLayerOn: { value: 0 } };
+export const layerUniforms = {
+  uLayer: { value: layerTexture as THREE.Texture }, uLayerOn: { value: 0 },
+  uLayerRect: { value: new THREE.Vector4(0, 0, 480, 480) },
+  uLayerRegionOn: { value: 0 },
+};
 
 export const layerState = { actual: 'ninguna' as CapaId, nota: '', tes: null as { valor: number; unidad: string; fuente: string } | null };
+const listeners = new Set<() => void>();
+let revision = 0;
+export const layerRevision = () => revision;
+export const subscribeLayers = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
+function notifyLayers() { revision++; listeners.forEach(listener => listener()); }
 
 let manifest: Manifest | null = null;
 const cache = new Map<string, Float32Array>();
@@ -112,18 +127,79 @@ export async function loadTes() {
   const a = await layer('tes_inercia_termica');
   if (!a) return;
   layerState.tes = { valor: a[(a.length / 2) | 0], unidad: c.unidad ?? '', fuente: c.fuente ?? '' };
+  notifyLayers();
 }
 
 let pending = 0;
+interface RenderedRaster { id: string; image: string; min: number; max: number; unit: string; textureRect: [number, number, number, number]; registered: boolean }
+let rasterManifest: Promise<RenderedRaster[]> | null = null;
+const rasterTextures = new Map<string, Promise<THREE.Texture>>();
+
+async function rasterLayer(id: RasterId) {
+  const base = `${import.meta.env.BASE_URL}rasters/`;
+  rasterManifest ??= fetch(base + 'manifest.json').then(async r => {
+    if (!r.ok) throw Error('No se encontraron las texturas de los rasters');
+    return await r.json() as RenderedRaster[];
+  }).catch(error => { rasterManifest = null; throw error; });
+  const item = (await rasterManifest).find(r => `raster-${r.id}` === id);
+  if (!item) throw Error('Raster desconocido');
+  if (!rasterTextures.has(id)) {
+    rasterTextures.set(id, new THREE.TextureLoader().loadAsync(base + item.image).then(texture => {
+      // Preview row 0 is north; world texture v grows towards the south.
+      texture.flipY = false;
+      // The layer shader explicitly converts the PNG's sRGB colours to linear.
+      texture.colorSpace = THREE.NoColorSpace;
+      texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      return texture;
+    }).catch(error => { rasterTextures.delete(id); throw error; }));
+  }
+  return { item, texture: await rasterTextures.get(id)! };
+}
+
+/** Initialise once on both laptop and headset, preserving subsequent choices. */
+export function initTerrainLayer() {
+  if (pending === 0) {
+    let saved: string | null = null;
+    try { saved = localStorage.getItem('ares.terrainLayer'); } catch { /* Storage is optional. */ }
+    void setLayer(CAPAS.some(c => c.id === saved) ? saved as CapaId : 'raster-terreno');
+  }
+}
+
 export async function setLayer(id: CapaId) {
   const ticket = ++pending;
   layerState.actual = id;
+  layerUniforms.uLayerOn.value = 0;
+  layerUniforms.uLayerRegionOn.value = 0;
+  notifyLayers();
   if (id === 'ninguna') {
     layerUniforms.uLayerOn.value = 0;
     layerState.nota = '';
+    notifyLayers();
+    return;
+  }
+  if (id.startsWith('raster-')) {
+    layerState.nota = 'Cargando textura del raster…';
+    notifyLayers();
+    try {
+      const { item, texture } = await rasterLayer(id as RasterId);
+      if (ticket !== pending) return;
+      layerUniforms.uLayer.value = texture;
+      layerUniforms.uLayerRect.value.fromArray(item.textureRect);
+      layerUniforms.uLayerOn.value = 1;
+      layerUniforms.uLayerRegionOn.value = item.registered ? 1 : 0;
+      layerState.nota = `${item.min.toFixed(1)}–${item.max.toFixed(1)} ${item.unit}. ` + (item.registered
+        ? 'Textura de elevación alineada con sus coordenadas; conserva el relieve caminable.'
+        : 'TIFF sin georreferencia: textura visual ajustada a la ventana de 480 m; no representa la ubicación real de esos valores.');
+    } catch (error) {
+      if (ticket === pending) layerState.nota = error instanceof Error ? error.message : 'No se pudo cargar la textura';
+    }
+    notifyLayers();
     return;
   }
   await getManifest();
+  if (ticket !== pending) return;
   data.fill(0);
   if (id === 'pendiente') {
     const s = await layer('pendiente_deg');
@@ -137,7 +213,7 @@ export async function setLayer(id: CapaId) {
     }
     layerState.nota = 'Pendiente del DEM: ámbar hasta 30°, rojo = no transitable (peligro.bin)';
   } else {
-    const list: Mineral[] = id === 'minerales' ? ['sulfatos', 'filosilicatos', 'silice', 'hematita'] : [id];
+    const list: Mineral[] = id === 'minerales' ? ['sulfatos', 'filosilicatos', 'silice', 'hematita'] : [id as Mineral];
     const strength = await Promise.all(list.map(mineralStrength));
     if (ticket !== pending) return;
     const colors = list.map((m) => rgb(MINERALES[m].color));
@@ -156,7 +232,10 @@ export async function setLayer(id: CapaId) {
   }
   if (ticket !== pending) return;
   layerTexture.needsUpdate = true;
+  layerUniforms.uLayer.value = layerTexture;
+  layerUniforms.uLayerRect.value.set(0, 0, 480, 480);
   layerUniforms.uLayerOn.value = 1;
+  notifyLayers();
 }
 
 // ---------------------------------------------------------------------------

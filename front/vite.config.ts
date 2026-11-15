@@ -101,7 +101,7 @@ export default defineConfig({
   build: {
     chunkSizeWarningLimit: 2000,
     rollupOptions: {
-      input: { main: 'index.html', explicacion: 'explicacion.html' },
+      input: { main: 'index.html', explicacion: 'explicacion.html', rasters: 'rasters.html' },
       output: {
         manualChunks: {
           three: ['three'],

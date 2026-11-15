@@ -221,6 +221,7 @@ export function makeGroundMaterial({ kind }: GroundOptions) {
       uHazeDensity: skyUniforms.uHazeDensity,
       uHazeScaleH: skyUniforms.uHazeScaleH,
       uMarsFog: marsFog,
+      ...layerUniforms,
     });
     if (site) Object.assign(shader.uniforms, terrainUniforms, siteAlbedo, shadeUniforms, layerUniforms);
     else Object.assign(shader.uniforms, regionUniforms, siteAlbedo);
@@ -240,13 +241,13 @@ varying vec3 vWPos; varying vec3 vWNormal;
 ${GROUND_GLSL}
 ${HAZE_GLSL}
 uniform sampler2D uSiteAlb; uniform float uSiteAlbOn;
+uniform sampler2D uLayer; uniform float uLayerOn; uniform vec4 uLayerRect; uniform float uLayerRegionOn;
 ${
   site
     ? `varying float vSand;
 uniform sampler2D uShade; uniform vec3 uShadowFocus;
 uniform sampler2D uFow; uniform float uFowStrength;
 uniform sampler2D uCost; uniform float uCostOn;
-uniform sampler2D uLayer; uniform float uLayerOn;
 uniform vec2 uRoverPos; uniform vec2 uRoverDir; uniform float uTime;
 uniform vec3 uScanPos; uniform float uScanOn;
 const float T_HALF = ${HALF.toFixed(1)}; const float T_SIZE = ${WORLD_SIZE.toFixed(1)}; const float T_CELL = 2.5;`
@@ -294,6 +295,15 @@ ${
   g.albedo *= 1.0 + slopeF * (0.22 * strata + 0.30 * coarse);
 #endif`
 }
+${site ? '' : `
+  if (uLayerOn > 0.5 && uLayerRegionOn > 0.5) {
+    vec2 rasterUV = (vWPos.xz - uLayerRect.xy) / uLayerRect.zw + 0.5;
+    if (all(greaterThanEqual(rasterUV, vec2(0.0))) && all(lessThanEqual(rasterUV, vec2(1.0)))) {
+      vec4 lc = texture2D(uLayer, rasterUV);
+      g.albedo = mix(g.albedo, pow(lc.rgb, vec3(2.2)), lc.a * 0.85);
+    }
+  }
+`}
   // Opposition surge: dusty ground brightens when you look straight down-Sun.
   g.albedo *= 1.0 + 0.20 * pow(max(dot(viewW, uSunDir), 0.0), 12.0);
   diffuseColor.rgb = g.albedo;
@@ -317,7 +327,9 @@ ${
   if (uLayerOn > 0.5) {
     // Data layer of the package (lib/layers.ts): the mineral / slope colour over the ground, a little self-lit
     // so it still reads in the shade.
-    vec4 lc = texture2D(uLayer, wuv);
+    vec2 rasterUV = (vWPos.xz - uLayerRect.xy) / uLayerRect.zw + 0.5;
+    vec4 lc = texture2D(uLayer, rasterUV);
+    if (any(lessThan(rasterUV, vec2(0.0))) || any(greaterThan(rasterUV, vec2(1.0)))) lc.a = 0.0;
     vec3 lin = pow(lc.rgb, vec3(2.2));
     diffuseColor.rgb = mix(diffuseColor.rgb, lin, lc.a * 0.85);
     gExtraEmit += lin * lc.a * 0.06;
